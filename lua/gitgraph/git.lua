@@ -22,16 +22,16 @@ function M.git_log_pretty(args, date_format)
     args.revision_range = nil
   end
 
-  local cli = [[git log %s %s --pretty="%s" --date="%s" %s %s --date-order]]
+  local cli = [[git log --branches %s %s --pretty="%s" --date="%s" %s %s --date-order]]
 
   local cli_args = {
-    args.revision_range or '', -- revision range
-    args.all and '--all' or '', -- all branches?
+    args.revision_range or '',                                          -- revision range
+    args.all and '--all' or '',                                         -- all branches?
     -- 'format:%s%x00(%D)%x00%ad%x00%an%x00%H%x00%P', -- format makes it easy to extract info
-    'format:%s%x00(%D)%x00%ad%x00%an%x00%h%x00%p', -- format makes it easy to extract info
-    'format:' .. date_format, -- date format
+    'format:%s%x00(%D)%x00%ad%x00%an%x00%h%x00%p',                      -- format makes it easy to extract info
+    'format:' .. date_format,                                           -- date format
     args.max_count and ('--max-count=%d'):format(args.max_count) or '', -- max count
-    args.skip and ('--skip=%d'):format(args.skip) or '', -- skip
+    args.skip and ('--skip=%d'):format(args.skip) or '',                -- skip
   }
 
   local git_cmd = (cli):format(unpack(cli_args))
