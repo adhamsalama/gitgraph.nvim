@@ -68,7 +68,7 @@ function M.resolve_bi_crossing(prev_commit_row, prev_connector_row, commit_row, 
   --   B         A              ⓚ         │
   --   a         A              ⓶─────────╯
   --   A                        ⓚ
-  local prev_prev_row = prev_connector_row -- graph[#graph - 2]
+  local prev_prev_row = prev_connector_row   -- graph[#graph - 2]
   local prev_prev_prev_row = prev_commit_row -- graph[#graph - 3]
   assert(prev_prev_row and prev_prev_prev_row)
   do
@@ -298,7 +298,7 @@ function M.apply_buffer_options(buf)
   local options = {
     'foldcolumn=0',
     'foldlevel=999',
-    'norelativenumber',
+    -- 'norelativenumber',
     'nospell',
     'noswapfile',
   }
