@@ -606,7 +606,7 @@ function M._gitgraph(raw_commits, opt, sym, fields)
       -- part 1
       if options.mode == 'debug' then
         add_to_row(row_to_debg(proper_row))
-        add_to_row((' '):rep(padding - #proper_row.cells))
+        -- add_to_row((' '):rep(padding - #proper_row.cells))
         add_to_row(row_to_str(proper_row))
       elseif options.mode == 'test' then
         add_to_row(row_to_test(proper_row))
