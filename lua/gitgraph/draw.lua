@@ -28,7 +28,7 @@ function M.draw(config, options, args)
       M.buf = vim.api.nvim_create_buf(false, true)
     end
   end
-
+  vim.cmd('tabnew') -- Open a new tab for the graph
   -- set active buffer to this one
   local buf = M.buf
   assert(buf)
