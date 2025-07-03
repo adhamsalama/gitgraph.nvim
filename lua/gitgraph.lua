@@ -103,8 +103,7 @@ function M.select_and_draw_branch()
       args.all = false
     end
     M.last_branch_args = vim.deepcopy(args)  -- Store the current branch filter
-    -- Always open in a new tab for interactive branch selection
-    M.draw({ open_in_new_tab = true }, args)
+    M.draw({}, args)
   end, M.last_selected_branch)
 end
 
