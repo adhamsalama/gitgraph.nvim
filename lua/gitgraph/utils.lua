@@ -314,7 +314,20 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
     local row = vim.api.nvim_win_get_cursor(0)[1]
     local commit = M.get_commit_from_row(graph, row)
     if commit then
-      hooks.on_select_commit(commit)
+      require('gitgraph.utils').select_commit_action(commit, {
+        {
+          label = "View",
+          fn = hooks.on_select_commit,
+        },
+        {
+          label = "Cherry-pick",
+          fn = function(c)
+            vim.fn.system({ "git", "cherry-pick", c.hash })
+            vim.notify("Cherry-picked " .. c.hash:sub(1,7), vim.log.levels.INFO)
+          end,
+        },
+        -- Add more actions here as needed
+      })
     end
   end, { buffer = buf_id, desc = 'select commit under cursor' })
 
@@ -329,7 +342,24 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
     local from_commit = M.get_commit_from_row(graph, end_row)
 
     if from_commit and to_commit then
-      hooks.on_select_range_commit(from_commit, to_commit)
+      require('gitgraph.utils').select_commit_action({from=from_commit, to=to_commit}, {
+        {
+          label = "View Range",
+          fn = function(range)
+            hooks.on_select_range_commit(range.from, range.to)
+          end,
+        },
+        {
+          label = "Cherry-pick Range",
+          fn = function(range)
+            -- Cherry-pick the range: from..to (exclusive of from, inclusive of to)
+            local range_str = range.from.hash .. "~1.." .. range.to.hash
+            vim.fn.system({ "git", "cherry-pick", range_str })
+            vim.notify("Cherry-picked range " .. range_str, vim.log.levels.INFO)
+          end,
+        },
+        -- Add more actions here as needed
+      })
     end
   end, { buffer = buf_id, desc = 'select range of commit' })
 end
@@ -402,6 +432,34 @@ function M.select_branch(callback, last_selected)
       callback(last_selected)
     else
       callback(choice)
+    end
+  end)
+end
+
+-- Show actions for a commit and call the appropriate handler
+function M.select_commit_action(commit, actions)
+  local action_names = {}
+  local prompt
+
+  -- Support both single commit and commit range
+  if commit and commit.hash then
+    prompt = "Select action for commit " .. commit.hash:sub(1,7)
+  elseif commit and commit.from and commit.to and commit.from.hash and commit.to.hash then
+    prompt = "Select action for commits " .. commit.from.hash:sub(1,7) .. " .. " .. commit.to.hash:sub(1,7)
+  else
+    prompt = "Select action"
+  end
+
+  for _, action in ipairs(actions) do
+    table.insert(action_names, action.label)
+  end
+  vim.ui.select(action_names, { prompt = prompt }, function(choice)
+    if not choice then return end
+    for _, action in ipairs(actions) do
+      if action.label == choice then
+        action.fn(commit)
+        return
+      end
     end
   end)
 end

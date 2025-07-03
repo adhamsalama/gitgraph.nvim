@@ -68,6 +68,8 @@ Git Graph plugin for neovim.
 When in the git graph buffer you can open `Diffview` on the commit under the cursor with `Enter`.
 
 When in visual mode you get the `Diffview` for the selected range.
+
+When you press `<CR>` (Enter) on a commit, you will be prompted to select an action (e.g., View, Cherry-pick).
 ```lua
   {
     'isakbm/gitgraph.nvim',
