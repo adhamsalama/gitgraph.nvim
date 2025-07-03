@@ -127,6 +127,17 @@ For example, use **kitty** branch symbols [more detail](https://github.com/kovid
 
 ... more keymaps to come ... 
 
+# Branch Selection
+
+You can interactively select a specific branch (or all branches) to view in the git graph.
+
+- `:GitGraphSelectBranch` — Opens a branch picker and draws the graph for the selected branch.
+- `<leader>gsb` — (Normal mode) Default keymap to open the branch picker.
+
+If you select "All branches", the graph will show all branches. If you select a specific branch, only that branch's history will be shown.
+
+If you have previously selected a branch, a "Repeat last branch" option will appear in the picker for quick access.
+
 # Highlights Groups
 
 ## commit information

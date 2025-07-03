@@ -364,4 +364,46 @@ function M.check_cmd(cmd)
   return vim.trim(last_line or '') ~= '0'
 end
 
+-- Fetch all local branches as a Lua table
+function M.get_local_branches()
+  local branches = {}
+  local handle = io.popen("git branch --list")
+  if not handle then
+    vim.notify("Failed to list branches", vim.log.levels.ERROR)
+    return branches
+  end
+  for line in handle:lines() do
+    -- Remove leading '*', whitespace, and trailing whitespace
+    local branch = line:gsub("^%*", ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if branch ~= "" then
+      table.insert(branches, branch)
+    end
+  end
+  handle:close()
+  if #branches == 0 then
+    vim.notify("No local branches found", vim.log.levels.WARN)
+  end
+  return branches
+end
+
+-- UI for branch selection, calls callback(branch_name or nil)
+function M.select_branch(callback, last_selected)
+  local branches = M.get_local_branches()
+  table.sort(branches)
+  table.insert(branches, 1, "All branches")
+  if last_selected then
+    table.insert(branches, 2, "Repeat last branch")
+  end
+  vim.ui.select(branches, { prompt = "Select branch to view" }, function(choice)
+    if not choice then return end
+    if choice == "All branches" then
+      callback(nil)
+    elseif choice == "Repeat last branch" then
+      callback(last_selected)
+    else
+      callback(choice)
+    end
+  end)
+end
+
 return M

@@ -26,7 +26,10 @@ end
 ---@param args I.GitLogArgs
 ---@return nil
 function M.draw(options, args)
-  return require('gitgraph.draw').draw(M.config, options, args)
+  local draw = require('gitgraph.draw')
+  draw.draw(M.config, options, args)
+  M.buf = draw.buf
+  M.graph = draw.graph
 end
 
 --- Tests the gitgraph plugin
@@ -55,6 +58,38 @@ function M.random()
   local cursor_line = 1
   vim.api.nvim_win_set_cursor(0, { cursor_line, 0 })
   vim.api.nvim_set_option_value('modifiable', false, { buf = buf })
+end
+
+-- Interactive branch selection and draw
+M.last_selected_branch = nil
+
+function M.select_and_draw_branch()
+  local utils = require('gitgraph.utils')
+  utils.select_branch(function(branch)
+    M.last_selected_branch = branch
+    local args = {}
+    if not branch then
+      args.all = true
+    else
+      args.revision_range = branch
+      args.all = false
+    end
+    M.draw({}, args)
+  end, M.last_selected_branch)
+end
+
+-- User command for branch selection
+if vim and vim.api and vim.api.nvim_create_user_command then
+  vim.api.nvim_create_user_command("GitGraphSelectBranch", function()
+    require('gitgraph').select_and_draw_branch()
+  end, { desc = "GitGraph: Select branch to view" })
+end
+
+-- Optional default keymap: <leader>gsb
+if vim and vim.keymap then
+  vim.keymap.set('n', '<leader>gsb', function()
+    require('gitgraph').select_and_draw_branch()
+  end, { desc = "GitGraph: Select branch to view" })
 end
 
 return M

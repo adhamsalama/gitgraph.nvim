@@ -267,8 +267,7 @@ function M._gitgraph(raw_commits, opt, sym, fields)
   ---@param curr_commit I.Commit
   ---@param next_commit I.Commit?
   ---@return I.Row
-  local function generate_connector_row(prev_commit_row, prev_connector_row, commit_row, commit_loc, curr_commit,
-                                        next_commit)
+  local function generate_connector_row(prev_commit_row, prev_connector_row, commit_row, commit_loc, curr_commit, next_commit)
     -- connector row (reservation row)
     --
     -- first we propagate
@@ -374,8 +373,7 @@ function M._gitgraph(raw_commits, opt, sym, fields)
       local connector_row = { cells = connector_cells } ---@type I.Row
 
       -- handle bi-connector rows
-      local is_bi_crossing, bi_crossing_safely_resolveable = utils.get_is_bi_crossing(commit_row, connector_row,
-        next_commit)
+      local is_bi_crossing, bi_crossing_safely_resolveable = utils.get_is_bi_crossing(commit_row, connector_row, next_commit)
 
       -- used for troubleshooting and tracking complexity of tests
       if is_bi_crossing then
@@ -422,8 +420,7 @@ function M._gitgraph(raw_commits, opt, sym, fields)
       local commit_row, commit_loc = generate_commit_row(curr_commit, prev_connector_row)
       local connector_row = nil ---@type I.Row
       if i < #sorted_commits then
-        connector_row = generate_connector_row(prev_commit_row, prev_connector_row, commit_row, commit_loc, curr_commit,
-          next_commit)
+        connector_row = generate_connector_row(prev_commit_row, prev_connector_row, commit_row, commit_loc, curr_commit, next_commit)
       end
 
       -- write the result
@@ -905,14 +902,14 @@ function M._gitgraph(raw_commits, opt, sym, fields)
     -- two neighbors (no straights)
     -- - 8421
     [10] = GCLU, -- '1010'
-    [9] = GCLD,  -- '1001'
-    [6] = GCRU,  -- '0110'
-    [5] = GCRD,  -- '0101'
+    [9] = GCLD, -- '1001'
+    [6] = GCRU, -- '0110'
+    [5] = GCRD, -- '0101'
     -- three neighbors
     [14] = GLRU, -- '1110'
     [13] = GLRD, -- '1101'
     [11] = GLUD, -- '1011'
-    [7] = GRUD,  -- '0111'
+    [7] = GRUD, -- '0111'
   }
 
   for i = 2, #graph, 2 do

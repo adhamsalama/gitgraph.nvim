@@ -22,17 +22,32 @@ function M.git_log_pretty(args, date_format)
     args.revision_range = nil
   end
 
-  local cli = [[git log --branches %s %s --pretty="%s" --date="%s" %s %s --date-order]]
+  -- If a specific branch is selected, do not use --branches or --all, just use the branch name as revision_range.
+  local cli
+  local cli_args
 
-  local cli_args = {
-    args.revision_range or '',                                          -- revision range
-    args.all and '--all' or '',                                         -- all branches?
-    -- 'format:%s%x00(%D)%x00%ad%x00%an%x00%H%x00%P', -- format makes it easy to extract info
-    'format:%s%x00(%D)%x00%ad%x00%an%x00%h%x00%p',                      -- format makes it easy to extract info
-    'format:' .. date_format,                                           -- date format
-    args.max_count and ('--max-count=%d'):format(args.max_count) or '', -- max count
-    args.skip and ('--skip=%d'):format(args.skip) or '',                -- skip
-  }
+  if args.revision_range and not args.all then
+    -- Show only the selected branch
+    cli = [[git log %s --pretty="%s" --date="%s" %s %s --date-order]]
+    cli_args = {
+      args.revision_range,                                              -- branch name
+      'format:%s%x00(%D)%x00%ad%x00%an%x00%h%x00%p',                    -- format
+      'format:' .. date_format,                                         -- date format
+      args.max_count and ('--max-count=%d'):format(args.max_count) or '',-- max count
+      args.skip and ('--skip=%d'):format(args.skip) or '',              -- skip
+    }
+  else
+    -- Show all branches (default/original behavior)
+    cli = [[git log --branches %s %s --pretty="%s" --date="%s" %s %s --date-order]]
+    cli_args = {
+      args.revision_range or '',                                          -- revision range
+      args.all and '--all' or '',                                         -- all branches?
+      'format:%s%x00(%D)%x00%ad%x00%an%x00%h%x00%p',                      -- format
+      'format:' .. date_format,                                           -- date format
+      args.max_count and ('--max-count=%d'):format(args.max_count) or '', -- max count
+      args.skip and ('--skip=%d'):format(args.skip) or '',                -- skip
+    }
+  end
 
   local git_cmd = (cli):format(unpack(cli_args))
 
