@@ -1,5 +1,27 @@
 local M = {}
 
+-- Helper: get current branch name
+local function get_current_branch()
+  local handle = io.popen("git rev-parse --abbrev-ref HEAD")
+  local branch = handle and handle:read("*l") or nil
+  if handle then handle:close() end
+  return branch
+end
+
+-- Helper: get last N commit hashes on branch (newest to oldest)
+local function get_last_n_commits(branch, n)
+  local cmd = string.format("git rev-list --max-count=%d %s", n, branch)
+  local handle = io.popen(cmd)
+  local hashes = {}
+  if handle then
+    for line in handle:lines() do
+      table.insert(hashes, line)
+    end
+    handle:close()
+  end
+  return hashes
+end
+
 ---@param next I.Commit
 ---@param prev_commit_row I.Row
 ---@param prev_connector_row I.Row
@@ -361,7 +383,40 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
     local from_commit = M.get_commit_from_row(graph, end_row)
 
     if from_commit and to_commit then
-      require('gitgraph.utils').select_commit_action({from=from_commit, to=to_commit}, {
+      -- Ensure from is older than to
+      local range = {from=from_commit, to=to_commit}
+      if from_commit.i and to_commit.i and from_commit.i > to_commit.i then
+        range = {from=to_commit, to=from_commit}
+      end
+
+      -- Gather hashes in the selected range (inclusive, oldest to newest)
+      local selected_hashes = {}
+      local found = false
+      for _, row in ipairs(graph) do
+        if row.commit then
+          if row.commit.hash == range.from.hash then found = true end
+          if found then table.insert(selected_hashes, row.commit.hash) end
+          if row.commit.hash == range.to.hash then break end
+        end
+      end
+
+      -- Get last N commits on current branch
+      local branch = get_current_branch()
+      local last_n_hashes = branch and get_last_n_commits(branch, #selected_hashes) or {}
+      -- git rev-list returns newest to oldest, so reverse for comparison
+      local reversed = {}
+      for i = #last_n_hashes, 1, -1 do table.insert(reversed, last_n_hashes[i]) end
+
+      local is_tip_range = #selected_hashes == #reversed
+      for i = 1, #selected_hashes do
+        if selected_hashes[i] ~= reversed[i] then
+          is_tip_range = false
+          break
+        end
+      end
+
+      -- Build actions
+      local actions = {
         {
           label = "View Range (DiffviewOpen)",
           fn = function(range)
@@ -377,27 +432,47 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
         {
           label = "Cherry-pick Range",
           fn = function(range)
-            -- Cherry-pick the range: from..to (exclusive of from, inclusive of to)
             local range_str = range.from.hash .. "~1.." .. range.to.hash
             vim.fn.system({ "git", "cherry-pick", range_str })
             vim.notify("Cherry-picked range " .. range_str, vim.log.levels.INFO)
-            -- Redraw the graph after cherry-pick
             require('gitgraph').draw({}, { all = true, max_count = 5000 })
           end,
         },
         {
           label = "Revert Range",
           fn = function(range)
-            -- Revert the range: from..to (exclusive of from, inclusive of to)
             local range_str = range.from.hash .. "~1.." .. range.to.hash
             vim.fn.system({ "git", "revert", range_str })
             vim.notify("Reverted range " .. range_str, vim.log.levels.INFO)
-            -- Redraw the graph after revert
             require('gitgraph').draw({}, { all = true, max_count = 5000 })
           end,
         },
-        -- Add more actions here as needed
-      })
+      }
+
+      -- If the range is the last N commits on the current branch, add Squash
+      if is_tip_range and branch then
+        table.insert(actions, {
+          label = "Squash Range",
+          fn = function(range)
+            vim.ui.input({ prompt = "Enter new commit message for squash:" }, function(msg)
+              if not msg or msg == "" then
+                vim.notify("Squash aborted: no message entered", vim.log.levels.ERROR)
+                return
+              end
+              local oldest = range.from.hash
+              -- Move HEAD to before the oldest commit in the range
+              local reset_cmd = { "git", "reset", "--soft", oldest .. "^" }
+              local commit_cmd = { "git", "commit", "-m", msg }
+              vim.fn.system(reset_cmd)
+              vim.fn.system(commit_cmd)
+              vim.notify("Squashed range into one commit", vim.log.levels.INFO)
+              require('gitgraph').draw({}, { all = true, max_count = 5000 })
+            end)
+          end,
+        })
+      end
+
+      require('gitgraph.utils').select_commit_action(range, actions)
     end
   end, { buffer = buf_id, desc = 'select range of commit' })
 end
