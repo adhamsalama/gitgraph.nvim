@@ -169,6 +169,12 @@ if vim and vim.api and vim.api.nvim_create_user_command then
   end, { desc = "GitGraph: Search by author and/or message" })
 end
 
+if vim and vim.api and vim.api.nvim_create_user_command then
+  vim.api.nvim_create_user_command("GitGraphMaxCount", function()
+    require('gitgraph').select_and_draw_max_count()
+  end, { desc = "Set max commit count interactively" })
+end
+
 -- Optional default keymap: <leader>gsb
 if vim and vim.keymap then
   vim.keymap.set('n', '<leader>gsb', function()
@@ -194,6 +200,31 @@ if vim and vim.keymap then
   end, { desc = "GitGraph: Search by author and/or message" })
 end
 
+if vim and vim.keymap then
+  vim.keymap.set('n', '<leader>gsmc', function()
+    require('gitgraph').select_and_draw_max_count()
+  end, { desc = "Set max commit count interactively" })
+end
+
+
+-- Prompt for max_count and redraw the graph
+function M.select_and_draw_max_count()
+  vim.ui.input({ prompt = "Enter max commit count (empty for unlimited):" }, function(input)
+    local args = vim.deepcopy(M.last_branch_args or { all = true })
+    if input and input ~= "" then
+      local n = tonumber(input)
+      if n and n > 0 then
+        args.max_count = n
+      else
+        vim.notify("Invalid number for max_count", vim.log.levels.ERROR)
+        return
+      end
+    else
+      args.max_count = nil
+    end
+    M.draw({}, args)
+  end)
+end
 
 -- GrugFar-style side buffer for search input
 function M.open_search_sidebuf()

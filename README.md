@@ -129,6 +129,11 @@ For example, use **kitty** branch symbols [more detail](https://github.com/kovid
 
 ... more keymaps to come ... 
 
+## Max Count
+
+- `:GitGraphMaxCount` — Prompt for max commit count and redraw the graph.
+- `<leader>gsmc` — (Normal mode) Default keymap to set max commit count interactively.
+
 # Branch Selection
 
 You can interactively select a specific branch (or all branches) to view in the git graph.
