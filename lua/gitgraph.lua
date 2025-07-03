@@ -126,6 +126,43 @@ function M.select_and_draw_author()
   end)
 end
 
+-- Commit message search and draw
+function M.select_and_draw_message()
+  vim.ui.input({ prompt = "Enter commit message search (or part of it):" }, function(msg)
+    -- Start with the last branch args (or default to all branches)
+    local args = vim.deepcopy(M.last_branch_args or { all = true, max_count = 5000 })
+    args.max_count = 5000  -- always set a reasonable max_count
+
+    if not msg or msg == "" then
+      args.grep = nil
+    else
+      args.grep = msg
+    end
+
+    -- Do NOT open in a new tab for message search
+    M.draw({}, args)
+  end)
+end
+
+-- Combined author and message search and draw (now replaced by open_search_modal)
+function M.open_search_modal()
+  local snacks = require("snacks")
+  snacks.input({
+    title = "GitGraph Search",
+    fields = {
+      { id = "author", label = "Author", value = "" },
+      { id = "message", label = "Message", value = "" },
+    },
+    on_confirm = function(values)
+      local args = vim.deepcopy(M.last_branch_args or { all = true, max_count = 5000 })
+      args.max_count = 5000
+      args.author = (values.author ~= "" and values.author) or nil
+      args.grep = (values.message ~= "" and values.message) or nil
+      M.draw({}, args)
+    end,
+  })
+end
+
 -- User command for branch selection
 if vim and vim.api and vim.api.nvim_create_user_command then
   vim.api.nvim_create_user_command("GitGraphSelectBranch", function()
@@ -139,6 +176,18 @@ if vim and vim.api and vim.api.nvim_create_user_command then
   end, { desc = "GitGraph: View commits by author" })
 end
 
+if vim and vim.api and vim.api.nvim_create_user_command then
+  vim.api.nvim_create_user_command("GitGraphMessage", function()
+    require('gitgraph').select_and_draw_message()
+  end, { desc = "GitGraph: Search commits by message" })
+end
+
+if vim and vim.api and vim.api.nvim_create_user_command then
+  vim.api.nvim_create_user_command("GitGraphSearch", function()
+    require('gitgraph').open_search_modal()
+  end, { desc = "GitGraph: Search by author and/or message" })
+end
+
 -- Optional default keymap: <leader>gsb
 if vim and vim.keymap then
   vim.keymap.set('n', '<leader>gsb', function()
@@ -150,6 +199,18 @@ if vim and vim.keymap then
   vim.keymap.set('n', '<leader>gsa', function()
     require('gitgraph').select_and_draw_author()
   end, { desc = "GitGraph: View commits by author" })
+end
+
+if vim and vim.keymap then
+  vim.keymap.set('n', '<leader>gsm', function()
+    require('gitgraph').select_and_draw_message()
+  end, { desc = "GitGraph: Search commits by message" })
+end
+
+if vim and vim.keymap then
+  vim.keymap.set('n', '<leader>gss', function()
+    require('gitgraph').open_search_modal()
+  end, { desc = "GitGraph: Search by author and/or message" })
 end
 
 return M
