@@ -1,7 +1,7 @@
 local M = {}
 
 -- Helper: get current branch name
-local function get_current_branch()
+function M.get_current_branch()
   local handle = io.popen("git rev-parse --abbrev-ref HEAD")
   local branch = handle and handle:read("*l") or nil
   if handle then handle:close() end
@@ -336,7 +336,20 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
     local row = vim.api.nvim_win_get_cursor(0)[1]
     local commit = M.get_commit_from_row(graph, row)
     if commit then
-      require('gitgraph.utils').select_commit_action(commit, {
+      -- Get the actual checked-out HEAD short hash
+      local head_hash = nil
+      do
+        local handle = io.popen("git rev-parse --short=7 HEAD")
+        if handle then
+          head_hash = handle:read("*l")
+          handle:close()
+        end
+      end
+
+      local selection_ends_at_head = commit.hash == head_hash
+
+
+      local actions = {
         {
           label = "View (DiffviewOpen)",
           fn = function(c)
@@ -368,7 +381,38 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
           end,
         },
         -- Add more actions here as needed
-      })
+      }
+
+      if selection_ends_at_head then
+        table.insert(actions, {
+          label = "Soft Reset (HEAD~1)",
+          fn = function(c)
+            local reset_to = c.hash .. "^"
+            vim.ui.select({ "Yes", "No" }, { prompt = "Soft reset HEAD to " .. reset_to .. "?" }, function(choice)
+              if choice == "Yes" then
+                vim.fn.system({ "git", "reset", "--soft", reset_to })
+                vim.notify("Soft reset to " .. reset_to, vim.log.levels.INFO)
+                require('gitgraph').draw({}, { all = true, max_count = 5000 })
+              end
+            end)
+          end,
+        })
+        table.insert(actions, {
+          label = "Hard Reset (HEAD~1)",
+          fn = function(c)
+            local reset_to = c.hash .. "^"
+            vim.ui.select({ "Yes", "No" }, { prompt = "Hard reset HEAD to " .. reset_to .. "? This is destructive!" }, function(choice)
+              if choice == "Yes" then
+                vim.fn.system({ "git", "reset", "--hard", reset_to })
+                vim.notify("Hard reset to " .. reset_to, vim.log.levels.INFO)
+                require('gitgraph').draw({}, { all = true, max_count = 5000 })
+              end
+            end)
+          end,
+        })
+      end
+
+      require('gitgraph.utils').select_commit_action(commit, actions)
     end
   end, { buffer = buf_id, desc = 'select commit under cursor' })
 
@@ -383,37 +427,56 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
     local from_commit = M.get_commit_from_row(graph, end_row)
 
     if from_commit and to_commit then
-      -- Ensure from is older than to
+      -- Robustly collect all commits between from_commit and to_commit (inclusive), regardless of order
       local range = {from=from_commit, to=to_commit}
-      if from_commit.i and to_commit.i and from_commit.i > to_commit.i then
-        range = {from=to_commit, to=from_commit}
-      end
-
-      -- Gather hashes in the selected range (inclusive, oldest to newest)
-      local selected_hashes = {}
-      local found = false
-      for _, row in ipairs(graph) do
+      -- Find the row indices for from and to in the graph
+      local from_idx, to_idx
+      for i, row in ipairs(graph) do
         if row.commit then
-          if row.commit.hash == range.from.hash then found = true end
-          if found then table.insert(selected_hashes, row.commit.hash) end
-          if row.commit.hash == range.to.hash then break end
+          if row.commit.hash == range.from.hash then from_idx = i end
+          if row.commit.hash == range.to.hash then to_idx = i end
         end
       end
 
-      -- Get last N commits on current branch
-      local branch = get_current_branch()
-      local last_n_hashes = branch and get_last_n_commits(branch, #selected_hashes) or {}
-      -- git rev-list returns newest to oldest, so reverse for comparison
-      local reversed = {}
-      for i = #last_n_hashes, 1, -1 do table.insert(reversed, last_n_hashes[i]) end
+      local selected_hashes = {}
+      if from_idx and to_idx then
+        local step = from_idx <= to_idx and 1 or -1
+        for i = from_idx, to_idx, step do
+          local row = graph[i]
+          if row.commit then
+            table.insert(selected_hashes, row.commit.hash)
+          end
+        end
+        -- Ensure selected_hashes is in oldest-to-newest order
+        if step == -1 then
+          local reversed = {}
+          for i = #selected_hashes, 1, -1 do
+            table.insert(reversed, selected_hashes[i])
+          end
+          selected_hashes = reversed
+        end
+      else
+        vim.notify("Could not determine commit range in graph", vim.log.levels.ERROR)
+        return
+      end
 
-      local is_tip_range = #selected_hashes == #reversed
-      for i = 1, #selected_hashes do
-        if selected_hashes[i] ~= reversed[i] then
-          is_tip_range = false
-          break
+      -- Get the actual checked-out HEAD short hash (same length as your graph)
+      local head_hash = nil
+      do
+        local handle = io.popen("git rev-parse --short=7 HEAD")
+        if handle then
+          head_hash = handle:read("*l")
+          handle:close()
         end
       end
+
+      local selection_ends_at_head = false
+      if #selected_hashes > 0 and head_hash then
+        if selected_hashes[1] == head_hash or selected_hashes[#selected_hashes] == head_hash then
+          selection_ends_at_head = true
+        end
+      end
+
 
       -- Build actions
       local actions = {
@@ -449,8 +512,34 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
         },
       }
 
-      -- If the range is the last N commits on the current branch, add Squash
-      if is_tip_range and branch then
+      -- Only offer reset actions if the selection ends at HEAD
+      if selection_ends_at_head then
+        table.insert(actions, {
+          label = "Soft Reset (last " .. #selected_hashes .. " commits)",
+          fn = function(range)
+            local reset_to = range.from.hash .. "^"
+            vim.ui.select({ "Yes", "No" }, { prompt = "Soft reset HEAD to " .. reset_to .. "?" }, function(choice)
+              if choice == "Yes" then
+                vim.fn.system({ "git", "reset", "--soft", reset_to })
+                vim.notify("Soft reset to " .. reset_to, vim.log.levels.INFO)
+                require('gitgraph').draw({}, { all = true, max_count = 5000 })
+              end
+            end)
+          end,
+        })
+        table.insert(actions, {
+          label = "Hard Reset (last " .. #selected_hashes .. " commits)",
+          fn = function(range)
+            local reset_to = range.from.hash .. "^"
+            vim.ui.select({ "Yes", "No" }, { prompt = "Hard reset HEAD to " .. reset_to .. "? This is destructive!" }, function(choice)
+              if choice == "Yes" then
+                vim.fn.system({ "git", "reset", "--hard", reset_to })
+                vim.notify("Hard reset to " .. reset_to, vim.log.levels.INFO)
+                require('gitgraph').draw({}, { all = true, max_count = 5000 })
+              end
+            end)
+          end,
+        })
         table.insert(actions, {
           label = "Squash Range",
           fn = function(range)
