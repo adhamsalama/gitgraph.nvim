@@ -144,24 +144,6 @@ function M.select_and_draw_message()
   end)
 end
 
--- Combined author and message search and draw (now replaced by open_search_modal)
-function M.open_search_modal()
-  local snacks = require("snacks")
-  snacks.input({
-    title = "GitGraph Search",
-    fields = {
-      { id = "author", label = "Author", value = "" },
-      { id = "message", label = "Message", value = "" },
-    },
-    on_confirm = function(values)
-      local args = vim.deepcopy(M.last_branch_args or { all = true, max_count = 5000 })
-      args.max_count = 5000
-      args.author = (values.author ~= "" and values.author) or nil
-      args.grep = (values.message ~= "" and values.message) or nil
-      M.draw({}, args)
-    end,
-  })
-end
 
 -- User command for branch selection
 if vim and vim.api and vim.api.nvim_create_user_command then
@@ -184,7 +166,7 @@ end
 
 if vim and vim.api and vim.api.nvim_create_user_command then
   vim.api.nvim_create_user_command("GitGraphSearch", function()
-    require('gitgraph').open_search_modal()
+    require('gitgraph').open_search_sidebuf()
   end, { desc = "GitGraph: Search by author and/or message" })
 end
 
@@ -209,8 +191,81 @@ end
 
 if vim and vim.keymap then
   vim.keymap.set('n', '<leader>gss', function()
-    require('gitgraph').open_search_modal()
+    require('gitgraph').open_search_sidebuf()
   end, { desc = "GitGraph: Search by author and/or message" })
+end
+
+
+-- GrugFar-style side buffer for search input
+function M.open_search_sidebuf()
+  -- Open a vertical split and create a scratch buffer
+  vim.cmd("vsplit")
+  local win = vim.api.nvim_get_current_win()
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_win_set_buf(win, buf)
+  vim.api.nvim_buf_set_option(buf, "buftype", "nofile")
+  vim.api.nvim_buf_set_option(buf, "bufhidden", "wipe")
+  vim.api.nvim_buf_set_option(buf, "filetype", "gitgraphsearch")
+  vim.api.nvim_buf_set_option(buf, "swapfile", false)
+  vim.api.nvim_buf_set_option(buf, "modifiable", true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "# GitGraph Search",
+    "",
+    "Author: ",
+    "Message: ",
+    "",
+    "# Edit the fields above, then press <CR> on any line to search.",
+    "# Press q to close this window.",
+  })
+  vim.api.nvim_win_set_cursor(win, {3, 8}) -- Place cursor at Author field
+
+  -- Keymap: <CR> to trigger search
+  vim.api.nvim_buf_set_keymap(buf, "n", "<CR>", [[<cmd>lua require('gitgraph')._do_sidebuf_search()<CR>]], { nowait = true, noremap = true, silent = true })
+  -- Keymap: q to close
+  vim.api.nvim_buf_set_keymap(buf, "n", "q", "<cmd>close<CR>", { nowait = true, noremap = true, silent = true })
+
+  -- Store the buffer number for later reference
+  M._sidebuf = buf
+end
+
+function M._do_sidebuf_search()
+  local buf = M._sidebuf
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    vim.notify("Search buffer is not valid", vim.log.levels.ERROR)
+    return
+  end
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local author = ""
+  local message = ""
+  for _, line in ipairs(lines) do
+    local a = line:match("^Author:%s*(.*)")
+    if a then author = a end
+    local m = line:match("^Message:%s*(.*)")
+    if m then message = m end
+  end
+  local args = vim.deepcopy(M.last_branch_args or { all = true, max_count = 5000 })
+  args.max_count = 5000
+  args.author = (author ~= "" and author) or nil
+  args.grep = (message ~= "" and message) or nil
+
+  -- Find another window (not the search buffer) to draw the graph in
+  local search_win = vim.api.nvim_get_current_win()
+  local wins = vim.api.nvim_tabpage_list_wins(0)
+  local graph_win = nil
+  for _, win in ipairs(wins) do
+    if win ~= search_win then
+      graph_win = win
+      break
+    end
+  end
+  if graph_win then
+    vim.api.nvim_set_current_win(graph_win)
+    M.draw({}, args)
+    vim.api.nvim_set_current_win(search_win)
+  else
+    -- fallback: just draw in current window
+    M.draw({}, args)
+  end
 end
 
 return M
