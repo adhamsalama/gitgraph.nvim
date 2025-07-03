@@ -326,6 +326,13 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
             vim.notify("Cherry-picked " .. c.hash:sub(1,7), vim.log.levels.INFO)
           end,
         },
+        {
+          label = "Revert",
+          fn = function(c)
+            vim.fn.system({ "git", "revert", c.hash })
+            vim.notify("Reverted " .. c.hash:sub(1,7), vim.log.levels.INFO)
+          end,
+        },
         -- Add more actions here as needed
       })
     end
@@ -356,6 +363,15 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
             local range_str = range.from.hash .. "~1.." .. range.to.hash
             vim.fn.system({ "git", "cherry-pick", range_str })
             vim.notify("Cherry-picked range " .. range_str, vim.log.levels.INFO)
+          end,
+        },
+        {
+          label = "Revert Range",
+          fn = function(range)
+            -- Revert the range: from..to (exclusive of from, inclusive of to)
+            local range_str = range.from.hash .. "~1.." .. range.to.hash
+            vim.fn.system({ "git", "revert", range_str })
+            vim.notify("Reverted range " .. range_str, vim.log.levels.INFO)
           end,
         },
         -- Add more actions here as needed
