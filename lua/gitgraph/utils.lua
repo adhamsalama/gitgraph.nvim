@@ -316,8 +316,16 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
     if commit then
       require('gitgraph.utils').select_commit_action(commit, {
         {
-          label = "View",
-          fn = hooks.on_select_commit,
+          label = "View (DiffviewOpen)",
+          fn = function(c)
+            vim.cmd("DiffviewOpen " .. c.hash .. "^!")
+          end,
+        },
+        {
+          label = "View (DiffviewFileHistory)",
+          fn = function(c)
+            vim.cmd("DiffviewFileHistory --range=" .. c.hash .. "^!")
+          end,
         },
         {
           label = "Cherry-pick",
@@ -355,9 +363,15 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
     if from_commit and to_commit then
       require('gitgraph.utils').select_commit_action({from=from_commit, to=to_commit}, {
         {
-          label = "View Range",
+          label = "View Range (DiffviewOpen)",
           fn = function(range)
-            hooks.on_select_range_commit(range.from, range.to)
+            vim.cmd("DiffviewOpen " .. range.from.hash .. "~1.." .. range.to.hash)
+          end,
+        },
+        {
+          label = "View Range (DiffviewFileHistory)",
+          fn = function(range)
+            vim.cmd("DiffviewFileHistory --range=" .. range.from.hash .. "~1.." .. range.to.hash)
           end,
         },
         {
