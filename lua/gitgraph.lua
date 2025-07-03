@@ -2,11 +2,20 @@ local log = require('gitgraph.log')
 local config = require('gitgraph.config')
 local highlights = require('gitgraph.highlights')
 
+local function get_current_branch()
+  local handle = io.popen("git rev-parse --abbrev-ref HEAD")
+  local branch = handle and handle:read("*l") or nil
+  if handle then handle:close() end
+  return branch
+end
+
 local M = {
   config = config.defaults,
 
   buf = nil, ---@type integer?
   graph = {}, ---@type I.Row[]
+  last_selected_branch = nil,
+  last_branch_args = { revision_range = get_current_branch(), all = false },  -- Track the last used branch filter
 }
 
 --- Setup
@@ -30,6 +39,25 @@ function M.draw(options, args)
   draw.draw(M.config, options, args)
   M.buf = draw.buf
   M.graph = draw.graph
+
+  -- Track the last used branch filter for author search
+  -- Only store relevant branch filter keys
+  M.last_branch_args = M.last_branch_args or {}
+  if args then
+    if args.revision_range then
+      M.last_branch_args = { revision_range = args.revision_range, all = false }
+    elseif args.all then
+      M.last_branch_args = { all = true }
+    else
+      -- If neither, store current branch as revision_range
+      local handle = io.popen("git rev-parse --abbrev-ref HEAD")
+      local branch = handle and handle:read("*l") or nil
+      if handle then handle:close() end
+      if branch then
+        M.last_branch_args = { revision_range = branch, all = false }
+      end
+    end
+  end
 end
 
 --- Tests the gitgraph plugin
@@ -61,7 +89,7 @@ function M.random()
 end
 
 -- Interactive branch selection and draw
-M.last_selected_branch = nil
+-- Interactive branch selection and draw
 
 function M.select_and_draw_branch()
   local utils = require('gitgraph.utils')
@@ -74,9 +102,28 @@ function M.select_and_draw_branch()
       args.revision_range = branch
       args.all = false
     end
+    M.last_branch_args = vim.deepcopy(args)  -- Store the current branch filter
     -- Always open in a new tab for interactive branch selection
     M.draw({ open_in_new_tab = true }, args)
   end, M.last_selected_branch)
+end
+
+-- Author search and draw
+function M.select_and_draw_author()
+  vim.ui.input({ prompt = "Enter author name (or part of it):" }, function(author)
+    -- Start with the last branch args (or default to all branches)
+    local args = vim.deepcopy(M.last_branch_args or { all = true, max_count = 5000 })
+    args.max_count = 5000  -- always set a reasonable max_count
+
+    if not author or author == "" then
+      args.author = nil
+    else
+      args.author = author
+    end
+
+    -- Do NOT open in a new tab for author search
+    M.draw({}, args)
+  end)
 end
 
 -- User command for branch selection
@@ -86,11 +133,23 @@ if vim and vim.api and vim.api.nvim_create_user_command then
   end, { desc = "GitGraph: Select branch to view" })
 end
 
+if vim and vim.api and vim.api.nvim_create_user_command then
+  vim.api.nvim_create_user_command("GitGraphAuthor", function()
+    require('gitgraph').select_and_draw_author()
+  end, { desc = "GitGraph: View commits by author" })
+end
+
 -- Optional default keymap: <leader>gsb
 if vim and vim.keymap then
   vim.keymap.set('n', '<leader>gsb', function()
     require('gitgraph').select_and_draw_branch()
   end, { desc = "GitGraph: Select branch to view" })
+end
+
+if vim and vim.keymap then
+  vim.keymap.set('n', '<leader>gsa', function()
+    require('gitgraph').select_and_draw_author()
+  end, { desc = "GitGraph: View commits by author" })
 end
 
 return M

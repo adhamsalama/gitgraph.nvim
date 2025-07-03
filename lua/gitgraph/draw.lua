@@ -56,17 +56,33 @@ function M.draw(config, options, args)
   local graph, lines, highlights, head_loc = core.gitgraph(config, options, args)
   M.graph = graph
 
+  -- Insert branch name header
+  local header
+  if args and args.revision_range and not args.all then
+    header = "GitGraph: Branch — " .. args.revision_range
+  elseif args and args.all then
+    header = "GitGraph: All branches"
+  else
+    -- Neither all nor revision_range: show current branch
+    local handle = io.popen("git rev-parse --abbrev-ref HEAD")
+    local branch = handle and handle:read("*l") or "unknown"
+    if handle then handle:close() end
+    header = "GitGraph: Branch — " .. branch
+  end
+
+  -- Insert header as a separate line, but do NOT shift highlight rows
+  table.insert(lines, 1, header)
+
   local start = os.clock()
   -- put graph data in buffer
   do
     vim.api.nvim_buf_set_lines(buf, 0, #lines, false, lines) -- text
 
     -- highlights
-
     local function high()
       for _, hl in ipairs(highlights) do
-        local offset = 1
-        vim.api.nvim_buf_add_highlight(buf, -1, hl.hg, hl.row - 1, hl.start - 1 + offset, hl.stop + offset)
+        -- Do NOT offset highlight rows, since header is not part of the graph highlights
+        vim.api.nvim_buf_add_highlight(buf, -1, hl.hg, hl.row, hl.start, hl.stop)
       end
     end
 
@@ -83,7 +99,7 @@ function M.draw(config, options, args)
   end
 
   do
-    local cursor_line = head_loc
+    local cursor_line = (head_loc or 1) + 1 -- shift down by 1 for header
     vim.api.nvim_win_set_cursor(0, { cursor_line, 0 })
   end
 

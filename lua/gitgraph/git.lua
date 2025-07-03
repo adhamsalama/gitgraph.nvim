@@ -28,22 +28,24 @@ function M.git_log_pretty(args, date_format)
 
   if args.revision_range and not args.all then
     -- Show only the selected branch
-    cli = [[git log %s --pretty="%s" --date="%s" %s %s --date-order]]
+    cli = [[git log %s --pretty="%s" --date="%s" %s %s %s --date-order]]
     cli_args = {
       args.revision_range,                                              -- branch name
       'format:%s%x00(%D)%x00%ad%x00%an%x00%h%x00%p',                    -- format
       'format:' .. date_format,                                         -- date format
+      args.author and ('--author=%q'):format(args.author) or '',        -- author filter
       args.max_count and ('--max-count=%d'):format(args.max_count) or '',-- max count
       args.skip and ('--skip=%d'):format(args.skip) or '',              -- skip
     }
   else
     -- Show all branches (default/original behavior)
-    cli = [[git log --branches %s %s --pretty="%s" --date="%s" %s %s --date-order]]
+    cli = [[git log --branches %s %s --pretty="%s" --date="%s" %s %s %s --date-order]]
     cli_args = {
       args.revision_range or '',                                          -- revision range
       args.all and '--all' or '',                                         -- all branches?
       'format:%s%x00(%D)%x00%ad%x00%an%x00%h%x00%p',                      -- format
       'format:' .. date_format,                                           -- date format
+      args.author and ('--author=%q'):format(args.author) or '',          -- author filter
       args.max_count and ('--max-count=%d'):format(args.max_count) or '', -- max count
       args.skip and ('--skip=%d'):format(args.skip) or '',                -- skip
     }

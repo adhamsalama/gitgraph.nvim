@@ -140,6 +140,11 @@ If you select "All branches", the graph will show all branches. If you select a 
 
 If you have previously selected a branch, a "Repeat last branch" option will appear in the picker for quick access.
 
+## Author Search
+
+- `:GitGraphAuthor` — Prompts for an author name and shows only that author's commits in the graph.
+- `<leader>gsa` — (Normal mode) Default keymap to open the author search.
+
 # Highlights Groups
 
 ## commit information
