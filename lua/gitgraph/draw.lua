@@ -23,12 +23,16 @@ function M.draw(config, options, args)
   end
 
   -- reuse or create buffer
+  local open_in_new_tab = options and options.open_in_new_tab
   do
     if not M.buf or not vim.api.nvim_buf_is_valid(M.buf) then
       M.buf = vim.api.nvim_create_buf(false, true)
+      open_in_new_tab = true
     end
   end
-  vim.cmd('tabnew') -- Open a new tab for the graph
+  if open_in_new_tab then
+    vim.cmd('tabnew') -- Open a new tab for the graph
+  end
   -- set active buffer to this one
   local buf = M.buf
   assert(buf)

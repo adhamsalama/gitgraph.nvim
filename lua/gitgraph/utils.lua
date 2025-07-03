@@ -324,6 +324,8 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
           fn = function(c)
             vim.fn.system({ "git", "cherry-pick", c.hash })
             vim.notify("Cherry-picked " .. c.hash:sub(1,7), vim.log.levels.INFO)
+            -- Redraw the graph after cherry-pick
+            require('gitgraph').draw({}, { all = true, max_count = 5000 })
           end,
         },
         {
@@ -331,6 +333,8 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
           fn = function(c)
             vim.fn.system({ "git", "revert", c.hash })
             vim.notify("Reverted " .. c.hash:sub(1,7), vim.log.levels.INFO)
+            -- Redraw the graph after revert
+            require('gitgraph').draw({}, { all = true, max_count = 5000 })
           end,
         },
         -- Add more actions here as needed
@@ -363,6 +367,8 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
             local range_str = range.from.hash .. "~1.." .. range.to.hash
             vim.fn.system({ "git", "cherry-pick", range_str })
             vim.notify("Cherry-picked range " .. range_str, vim.log.levels.INFO)
+            -- Redraw the graph after cherry-pick
+            require('gitgraph').draw({}, { all = true, max_count = 5000 })
           end,
         },
         {
@@ -372,6 +378,8 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
             local range_str = range.from.hash .. "~1.." .. range.to.hash
             vim.fn.system({ "git", "revert", range_str })
             vim.notify("Reverted range " .. range_str, vim.log.levels.INFO)
+            -- Redraw the graph after revert
+            require('gitgraph').draw({}, { all = true, max_count = 5000 })
           end,
         },
         -- Add more actions here as needed

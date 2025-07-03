@@ -74,7 +74,8 @@ function M.select_and_draw_branch()
       args.revision_range = branch
       args.all = false
     end
-    M.draw({}, args)
+    -- Always open in a new tab for interactive branch selection
+    M.draw({ open_in_new_tab = true }, args)
   end, M.last_selected_branch)
 end
 
