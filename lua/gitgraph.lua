@@ -182,17 +182,17 @@ if vim and vim.keymap then
   end, { desc = "GitGraph: Select branch to view" })
 end
 
-if vim and vim.keymap then
-  vim.keymap.set('n', '<leader>gsa', function()
-    require('gitgraph').select_and_draw_author()
-  end, { desc = "GitGraph: View commits by author" })
-end
+-- if vim and vim.keymap then
+--   vim.keymap.set('n', '<leader>gsa', function()
+--     require('gitgraph').select_and_draw_author()
+--   end, { desc = "GitGraph: View commits by author" })
+-- end
 
-if vim and vim.keymap then
-  vim.keymap.set('n', '<leader>gsm', function()
-    require('gitgraph').select_and_draw_message()
-  end, { desc = "GitGraph: Search commits by message" })
-end
+-- if vim and vim.keymap then
+--   vim.keymap.set('n', '<leader>gsm', function()
+--     require('gitgraph').select_and_draw_message()
+--   end, { desc = "GitGraph: Search commits by message" })
+-- end
 
 if vim and vim.keymap then
   vim.keymap.set('n', '<leader>gss', function()
@@ -201,7 +201,7 @@ if vim and vim.keymap then
 end
 
 if vim and vim.keymap then
-  vim.keymap.set('n', '<leader>gsmc', function()
+  vim.keymap.set('n', '<leader>gsc', function()
     require('gitgraph').select_and_draw_max_count()
   end, { desc = "Set max commit count interactively" })
 end
