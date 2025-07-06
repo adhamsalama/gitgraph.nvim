@@ -418,6 +418,28 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
             })
           end
         end
+
+        -- Add "Check out branch" action if this commit is the tip of any branch (not current branch)
+        for _, branch in ipairs(branch_tips) do
+          if branch.hash == commit.hash and branch.name ~= current_branch then
+            table.insert(actions, {
+              label = "Check out branch '" .. branch.name .. "'",
+              fn = function(c)
+                vim.ui.select({ "Yes", "No" }, { prompt = "Check out branch '" .. branch.name .. "'?" }, function(choice)
+                  if choice == "Yes" then
+                    local output = vim.fn.systemlist({ "git", "checkout", branch.name })
+                    if vim.v.shell_error ~= 0 then
+                      vim.notify("Checkout failed:\n" .. table.concat(output, "\n"), vim.log.levels.ERROR)
+                    else
+                      vim.notify("Checked out branch '" .. branch.name .. "'", vim.log.levels.INFO)
+                      require('gitgraph').draw({}, { all = true })
+                    end
+                  end
+                end)
+              end,
+            })
+          end
+        end
       end
 
       if selection_ends_at_head then
