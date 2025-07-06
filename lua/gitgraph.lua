@@ -35,6 +35,10 @@ end
 ---@param args I.GitLogArgs
 ---@return nil
 function M.draw(options, args)
+  args = args or {}
+  if args.max_count == nil then
+    args.max_count = 1000 -- Only enforce the hard limit if not set by user
+  end
   local draw = require('gitgraph.draw')
   draw.draw(M.config, options, args)
   M.buf = draw.buf
