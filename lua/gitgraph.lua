@@ -2,6 +2,27 @@ local log = require('gitgraph.log')
 local config = require('gitgraph.config')
 local highlights = require('gitgraph.highlights')
 
+-- Custom highlight group for bright green search input
+vim.api.nvim_set_hl(0, "GitGraphSearchInputBrightGreen", { fg = "#00ff00", bold = true })
+
+local search_ns = vim.api.nvim_create_namespace("gitgraph_search_input")
+
+local function colorize_search_inputs(buf)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then return end
+  vim.api.nvim_buf_clear_namespace(buf, search_ns, 0, -1)
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  for i, line in ipairs(lines) do
+    local s, e = line:find(": ")
+    if s and e and e < #line then
+      vim.api.nvim_buf_set_extmark(buf, search_ns, i - 1, e, {
+        end_col = #line,
+        hl_group = "GitGraphSearchInputBrightGreen",
+        priority = 100,
+      })
+    end
+  end
+end
+
 -- Fields table for search panel and editing
 local fields = {
   { label = "Author (--author=): ", key = "author" },
@@ -299,6 +320,7 @@ function M.open_search_sidebuf()
     "# Press q to close this window.",
   })
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  colorize_search_inputs(buf)
   vim.api.nvim_win_set_cursor(win, {3, 8})
 
   -- Make buffer unmodifiable by default
@@ -460,6 +482,7 @@ function M.edit_search_field()
     vim.api.nvim_set_option_value('modifiable', true, { buf = buf })
     vim.api.nvim_buf_set_lines(buf, row-1, row, false, { new_line })
     vim.api.nvim_set_option_value('modifiable', false, { buf = buf })
+    colorize_search_inputs(buf)
 
     -- Update last_search_fields
     for _, field in ipairs(fields) do
