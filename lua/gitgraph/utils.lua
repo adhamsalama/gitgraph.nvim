@@ -383,6 +383,43 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
         -- Add more actions here as needed
       }
 
+      -- Add "Merge branch" action if this commit is the tip of any branch (not current branch)
+      do
+        -- Get all local branches and their tip hashes
+        local current_branch = M.get_current_branch()
+        local handle = io.popen("git for-each-ref --format='%(refname:short) %(objectname:short)' refs/heads/")
+        local branch_tips = {}
+        if handle then
+          for line in handle:lines() do
+            local name, hash = line:match("^([%w%p]+)%s+([a-f0-9]+)$")
+            if name and hash then
+              branch_tips[#branch_tips+1] = { name = name, hash = hash }
+            end
+          end
+          handle:close()
+        end
+        for _, branch in ipairs(branch_tips) do
+          if branch.hash == commit.hash and branch.name ~= current_branch then
+            table.insert(actions, {
+              label = "Merge branch '" .. branch.name .. "' into " .. current_branch,
+              fn = function(c)
+                vim.ui.select({ "Yes", "No" }, { prompt = "Merge branch '" .. branch.name .. "' into " .. current_branch .. "?" }, function(choice)
+                  if choice == "Yes" then
+                    local output = vim.fn.systemlist({ "git", "merge", "--no-ff", branch.name })
+                    if vim.v.shell_error ~= 0 then
+                      vim.notify("Merge failed:\n" .. table.concat(output, "\n"), vim.log.levels.ERROR)
+                    else
+                      vim.notify("Merged branch '" .. branch.name .. "' into " .. current_branch, vim.log.levels.INFO)
+                      require('gitgraph').draw({}, { all = true })
+                    end
+                  end
+                end)
+              end,
+            })
+          end
+        end
+      end
+
       if selection_ends_at_head then
         table.insert(actions, {
           label = "Soft Reset (HEAD~1)",
