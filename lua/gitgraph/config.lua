@@ -41,11 +41,13 @@ local log = require('gitgraph.log')
 ---@field format I.GGFormat
 ---@field hooks I.Hooks
 ---@field log_level integer
+---@field max_count integer
 
 local M = {}
 
 ---@type I.GGConfig
 M.defaults = {
+  max_count = 256,
   symbols = {
     merge_commit = 'M',
     commit = '*',

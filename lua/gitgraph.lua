@@ -36,9 +36,14 @@ end
 ---@return nil
 function M.draw(options, args)
   args = args or {}
-  if args.max_count == nil then
-    args.max_count = 1000 -- Only enforce the hard limit if not set by user
+  -- Always enforce default if not set, 0, or negative, or not a number
+  local default_max = (M.config and M.config.max_count) or (config.defaults and config.defaults.max_count) or 256
+  if not tonumber(args.max_count) or tonumber(args.max_count) <= 0 then
+    args.max_count = default_max
+  else
+    args.max_count = tonumber(args.max_count)
   end
+
   local draw = require('gitgraph.draw')
   draw.draw(M.config, options, args)
   M.buf = draw.buf
@@ -115,8 +120,13 @@ end
 function M.select_and_draw_author()
   vim.ui.input({ prompt = "Enter author name (or part of it):" }, function(author)
     -- Start with the last branch args (or default to all branches)
-    local args = vim.deepcopy(M.last_branch_args or { all = true, max_count = 5000 })
-    args.max_count = 5000  -- always set a reasonable max_count
+    local args = vim.deepcopy(M.last_branch_args or { all = true })
+    local default_max = (M.config and M.config.max_count) or (config.defaults and config.defaults.max_count) or 256
+    if not tonumber(args.max_count) or tonumber(args.max_count) <= 0 then
+      args.max_count = default_max
+    else
+      args.max_count = tonumber(args.max_count)
+    end
 
     if not author or author == "" then
       args.author = nil
@@ -133,8 +143,13 @@ end
 function M.select_and_draw_message()
   vim.ui.input({ prompt = "Enter commit message search (or part of it):" }, function(msg)
     -- Start with the last branch args (or default to all branches)
-    local args = vim.deepcopy(M.last_branch_args or { all = true, max_count = 5000 })
-    args.max_count = 5000  -- always set a reasonable max_count
+    local args = vim.deepcopy(M.last_branch_args or { all = true })
+    local default_max = (M.config and M.config.max_count) or (config.defaults and config.defaults.max_count) or 256
+    if not tonumber(args.max_count) or tonumber(args.max_count) <= 0 then
+      args.max_count = default_max
+    else
+      args.max_count = tonumber(args.max_count)
+    end
 
     if not msg or msg == "" then
       args.grep = nil
@@ -213,18 +228,14 @@ end
 
 -- Prompt for max_count and redraw the graph
 function M.select_and_draw_max_count()
-  vim.ui.input({ prompt = "Enter max commit count (empty for unlimited):" }, function(input)
+  vim.ui.input({ prompt = "Enter max commit count (empty for default):" }, function(input)
     local args = vim.deepcopy(M.last_branch_args or { all = true })
-    if input and input ~= "" then
-      local n = tonumber(input)
-      if n and n > 0 then
-        args.max_count = n
-      else
-        vim.notify("Invalid number for max_count", vim.log.levels.ERROR)
-        return
-      end
+    local default_max = (M.config and M.config.max_count) or (config.defaults and config.defaults.max_count) or 256
+    local n = tonumber(input)
+    if n and n > 0 then
+      args.max_count = n
     else
-      args.max_count = nil
+      args.max_count = default_max
     end
     M.draw({}, args)
   end)
@@ -261,7 +272,7 @@ function M.open_search_sidebuf()
     "Right only (--right-only): ",
     "Revision range (++rev-range=): ",
     "Base revision (++base=): ",
-    "Max count (--max-count=): ",
+    "Max count (--max-count=): " .. tostring(M.config.max_count or 256),
     "Trace line (-L): ",
     "Diff merges (--diff-merges=): ",
     "Grep (-G): ",
@@ -325,8 +336,14 @@ function M._do_sidebuf_search()
     limit_files = limit_files or line:match("^Limit to files %(%-%-%)%:%s*(.*)")
   end
 
-  local args = vim.deepcopy(M.last_branch_args or { all = true, max_count = 5000 })
-  args.max_count = tonumber(max_count) or 5000
+  local args = vim.deepcopy(M.last_branch_args or { all = true })
+  local default_max = (M.config and M.config.max_count) or (config.defaults and config.defaults.max_count) or 256
+  local n = tonumber(max_count)
+  if n and n > 0 then
+    args.max_count = n
+  else
+    args.max_count = default_max
+  end
 
   args.author = (author ~= "" and author) or nil
   args.grep = (message ~= "" and message) or nil
