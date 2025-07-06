@@ -275,10 +275,16 @@ function M.open_search_sidebuf()
   })
   vim.api.nvim_win_set_cursor(win, {3, 8})
 
-  -- Keymap: <CR> to trigger search
-  vim.api.nvim_buf_set_keymap(buf, "n", "<CR>", [[<cmd>lua require('gitgraph')._do_sidebuf_search()<CR>]], { nowait = true, noremap = true, silent = true })
+  -- Make buffer unmodifiable by default
+  vim.api.nvim_set_option_value('modifiable', false, { buf = buf })
+
+  -- Keymap: <CR> to edit a field
+  vim.api.nvim_buf_set_keymap(buf, "n", "<CR>", [[<cmd>lua require('gitgraph').edit_search_field()<CR>]], { nowait = true, noremap = true, silent = true })
   -- Keymap: q to close
   vim.api.nvim_buf_set_keymap(buf, "n", "q", "<cmd>close<CR>", { nowait = true, noremap = true, silent = true })
+
+  -- Optionally, keymap to trigger search (e.g. <leader>ss)
+  vim.api.nvim_buf_set_keymap(buf, "n", "<leader>ss", [[<cmd>lua require('gitgraph')._do_sidebuf_search()<CR>]], { nowait = true, noremap = true, silent = true })
 
   -- Store the buffer number for later reference
   M._sidebuf = buf
@@ -364,6 +370,39 @@ function M._do_sidebuf_search()
     -- fallback: just draw in current window
     M.draw({}, args)
   end
+end
+
+-- Edit a field in the search side buffer
+function M.edit_search_field()
+  local buf = M._sidebuf
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    vim.notify("Search buffer is not valid", vim.log.levels.ERROR)
+    return
+  end
+  local win = vim.api.nvim_get_current_win()
+  local row = vim.api.nvim_win_get_cursor(win)[1]
+  local line = vim.api.nvim_buf_get_lines(buf, row-1, row, false)[1]
+  if not line or line:match("^#") or line:match("^%s*$") then
+    -- Ignore comments and blank lines
+    return
+  end
+
+  -- Find the colon that separates label and value
+  local label, value = line:match("^(.-:%s*)(.*)$")
+  if not label then
+    return
+  end
+
+  vim.ui.input({ prompt = "Enter value for " .. label:gsub(":%s*$", "") }, function(input)
+    if input == nil then return end
+    -- Update only the value part
+    local new_line = label .. input
+    vim.api.nvim_set_option_value('modifiable', true, { buf = buf })
+    vim.api.nvim_buf_set_lines(buf, row-1, row, false, { new_line })
+    vim.api.nvim_set_option_value('modifiable', false, { buf = buf })
+    -- Trigger the search immediately after input
+    require('gitgraph')._do_sidebuf_search()
+  end)
 end
 
 return M
