@@ -374,10 +374,35 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
         {
           label = "Revert",
           fn = function(c)
-            vim.fn.system({ "git", "revert", c.hash })
-            vim.notify("Reverted " .. c.hash:sub(1,7), vim.log.levels.INFO)
-            -- Redraw the graph after revert
-            require('gitgraph').draw({}, { all = true })
+            -- Check if commit is a merge commit (has more than one parent)
+            if c.parents and #c.parents > 1 then
+              -- Prompt user to select mainline parent
+              local parent_choices = {}
+              for i, parent in ipairs(c.parents) do
+                table.insert(parent_choices, string.format("Parent %d: %s", i, parent:sub(1, 7)))
+              end
+              vim.ui.select(parent_choices, { prompt = "Select mainline parent for revert (-m):" }, function(choice, idx)
+                if not idx then
+                  vim.notify("Revert aborted: no mainline parent selected", vim.log.levels.WARN)
+                  return
+                end
+                local output = vim.fn.systemlist({ "git", "revert", "-m", tostring(idx), c.hash })
+                if vim.v.shell_error ~= 0 then
+                  vim.notify("Revert failed:\n" .. table.concat(output, "\n"), vim.log.levels.ERROR)
+                else
+                  vim.notify("Reverted merge commit " .. c.hash:sub(1,7) .. " (mainline " .. idx .. ")", vim.log.levels.INFO)
+                  require('gitgraph').draw({}, { all = true })
+                end
+              end)
+            else
+              local output = vim.fn.systemlist({ "git", "revert", c.hash })
+              if vim.v.shell_error ~= 0 then
+                vim.notify("Revert failed:\n" .. table.concat(output, "\n"), vim.log.levels.ERROR)
+              else
+                vim.notify("Reverted " .. c.hash:sub(1,7), vim.log.levels.INFO)
+                require('gitgraph').draw({}, { all = true })
+              end
+            end
           end,
         },
         -- Add more actions here as needed
