@@ -245,13 +245,35 @@ function M.open_search_sidebuf()
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
     "# GitGraph Search",
     "",
-    "Author: ",
-    "Message: ",
+    "Author (--author=): ",
+    "Message (--grep=): ",
+    "Follow renames (--follow): ",
+    "First parent (--first-parent): ",
+    "Show pulls (--show-pulls): ",
+    "Reflog (--reflog): ",
+    "Walk reflogs (--walk-reflogs): ",
+    "All refs (--all): ",
+    "Only merges (--merges): ",
+    "No merges (--no-merges): ",
+    "Reverse (--reverse): ",
+    "Cherry-pick (--cherry-pick): ",
+    "Left only (--left-only): ",
+    "Right only (--right-only): ",
+    "Revision range (++rev-range=): ",
+    "Base revision (++base=): ",
+    "Max count (--max-count=): ",
+    "Trace line (-L): ",
+    "Diff merges (--diff-merges=): ",
+    "Grep (-G): ",
+    "Search occurrences (-S): ",
+    "After (--after=): ",
+    "Before (--before=): ",
+    "Limit to files (--): ",
     "",
     "# Edit the fields above, then press <CR> on any line to search.",
     "# Press q to close this window.",
   })
-  vim.api.nvim_win_set_cursor(win, {3, 8}) -- Place cursor at Author field
+  vim.api.nvim_win_set_cursor(win, {3, 8})
 
   -- Keymap: <CR> to trigger search
   vim.api.nvim_buf_set_keymap(buf, "n", "<CR>", [[<cmd>lua require('gitgraph')._do_sidebuf_search()<CR>]], { nowait = true, noremap = true, silent = true })
@@ -269,18 +291,60 @@ function M._do_sidebuf_search()
     return
   end
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local author = ""
-  local message = ""
+  local author, message, follow, first_parent, show_pulls, reflog, walk_reflogs, all_refs, only_merges, no_merges, reverse, cherry_pick, left_only, right_only, rev_range, base, max_count, trace_line, diff_merges, grep_G, search_S, after, before, limit_files
   for _, line in ipairs(lines) do
-    local a = line:match("^Author:%s*(.*)")
-    if a then author = a end
-    local m = line:match("^Message:%s*(.*)")
-    if m then message = m end
+    author = author or line:match("^Author %(%-%-author=%)%:%s*(.*)")
+    message = message or line:match("^Message %(%-%-grep=%)%:%s*(.*)")
+    follow = follow or line:match("^Follow renames %(%-%-follow%)%:%s*(.*)")
+    first_parent = first_parent or line:match("^First parent %(%-%-first%-parent%)%:%s*(.*)")
+    show_pulls = show_pulls or line:match("^Show pulls %(%-%-show%-pulls%)%:%s*(.*)")
+    reflog = reflog or line:match("^Reflog %(%-%-reflog%)%:%s*(.*)")
+    walk_reflogs = walk_reflogs or line:match("^Walk reflogs %(%-%-walk%-reflogs%)%:%s*(.*)")
+    all_refs = all_refs or line:match("^All refs %(%-%-all%)%:%s*(.*)")
+    only_merges = only_merges or line:match("^Only merges %(%-%-merges%)%:%s*(.*)")
+    no_merges = no_merges or line:match("^No merges %(%-%-no%-merges%)%:%s*(.*)")
+    reverse = reverse or line:match("^Reverse %(%-%-reverse%)%:%s*(.*)")
+    cherry_pick = cherry_pick or line:match("^Cherry%-pick %(%-%-cherry%-pick%)%:%s*(.*)")
+    left_only = left_only or line:match("^Left only %(%-%-left%-only%)%:%s*(.*)")
+    right_only = right_only or line:match("^Right only %(%-%-right%-only%)%:%s*(.*)")
+    rev_range = rev_range or line:match("^Revision range %(%+%+rev%-range=%)%:%s*(.*)")
+    base = base or line:match("^Base revision %(%+%+base=%)%:%s*(.*)")
+    max_count = max_count or line:match("^Max count %(%-%-max%-count=%)%:%s*(.*)")
+    trace_line = trace_line or line:match("^Trace line %(%-L%)%:%s*(.*)")
+    diff_merges = diff_merges or line:match("^Diff merges %(%-%-diff%-merges=%)%:%s*(.*)")
+    grep_G = grep_G or line:match("^Grep %(%-G%)%:%s*(.*)")
+    search_S = search_S or line:match("^Search occurrences %(%-S%)%:%s*(.*)")
+    after = after or line:match("^After %(%-%-after=%)%:%s*(.*)")
+    before = before or line:match("^Before %(%-%-before=%)%:%s*(.*)")
+    limit_files = limit_files or line:match("^Limit to files %(%-%-%)%:%s*(.*)")
   end
+
   local args = vim.deepcopy(M.last_branch_args or { all = true, max_count = 5000 })
-  args.max_count = 5000
+  args.max_count = tonumber(max_count) or 5000
+
   args.author = (author ~= "" and author) or nil
   args.grep = (message ~= "" and message) or nil
+  args.follow = (follow and follow:lower():match("^y")) and true or nil
+  args.first_parent = (first_parent and first_parent:lower():match("^y")) and true or nil
+  args.show_pulls = (show_pulls and show_pulls:lower():match("^y")) and true or nil
+  args.reflog = (reflog and reflog:lower():match("^y")) and true or nil
+  args.walk_reflogs = (walk_reflogs and walk_reflogs:lower():match("^y")) and true or nil
+  args.all = (all_refs and all_refs:lower():match("^y")) and true or nil
+  args.merges = (only_merges and only_merges:lower():match("^y")) and true or nil
+  args.no_merges = (no_merges and no_merges:lower():match("^y")) and true or nil
+  args.reverse = (reverse and reverse:lower():match("^y")) and true or nil
+  args.cherry_pick = (cherry_pick and cherry_pick:lower():match("^y")) and true or nil
+  args.left_only = (left_only and left_only:lower():match("^y")) and true or nil
+  args.right_only = (right_only and right_only:lower():match("^y")) and true or nil
+  args.revision_range = (rev_range ~= "" and rev_range) or args.revision_range
+  args.base = (base ~= "" and base) or nil
+  args.L = (trace_line ~= "" and trace_line) or nil
+  args.diff_merges = (diff_merges ~= "" and diff_merges) or nil
+  args.grep_G = (grep_G ~= "" and grep_G) or nil
+  args.search_S = (search_S ~= "" and search_S) or nil
+  args.after = (after ~= "" and after) or nil
+  args.before = (before ~= "" and before) or nil
+  args.limit_files = (limit_files ~= "" and limit_files) or nil
 
   -- Find another window (not the search buffer) to draw the graph in
   local search_win = vim.api.nvim_get_current_win()

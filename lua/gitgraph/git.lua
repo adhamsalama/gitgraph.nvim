@@ -28,30 +28,61 @@ function M.git_log_pretty(args, date_format)
 
   local grep_arg = args.grep and ('--grep=%q'):format(args.grep) or ''
 
+  -- Add new switches/options
+  local switches = {}
+  if args.follow then table.insert(switches, "--follow") end
+  if args.first_parent then table.insert(switches, "--first-parent") end
+  if args.show_pulls then table.insert(switches, "--show-pulls") end
+  if args.reflog then table.insert(switches, "--reflog") end
+  if args.walk_reflogs then table.insert(switches, "--walk-reflogs") end
+  if args.all then table.insert(switches, "--all") end
+  if args.merges then table.insert(switches, "--merges") end
+  if args.no_merges then table.insert(switches, "--no-merges") end
+  if args.reverse then table.insert(switches, "--reverse") end
+  if args.cherry_pick then table.insert(switches, "--cherry-pick") end
+  if args.left_only then table.insert(switches, "--left-only") end
+  if args.right_only then table.insert(switches, "--right-only") end
+  if args.base then table.insert(switches, "--base=" .. args.base) end
+  if args.L then table.insert(switches, "-L" .. args.L) end
+  if args.diff_merges then table.insert(switches, "--diff-merges=" .. args.diff_merges) end
+  if args.grep_G then table.insert(switches, "-G" .. args.grep_G) end
+  if args.search_S then table.insert(switches, "-S" .. args.search_S) end
+  if args.after then table.insert(switches, "--after=" .. args.after) end
+  if args.before then table.insert(switches, "--before=" .. args.before) end
+
+  local file_args = ""
+  if args.limit_files then
+    file_args = " -- " .. args.limit_files
+  end
+
   if args.revision_range and not args.all then
     -- Show only the selected branch
-    cli = [[git log %s --pretty="%s" --date="%s" %s %s %s %s --date-order]]
+    cli = [[git log %s %s --pretty="%s" --date="%s" %s %s %s %s --date-order%s]]
     cli_args = {
       args.revision_range,                                              -- branch name
+      table.concat(switches, " "),                                      -- new switches
       'format:%s%x00(%D)%x00%ad%x00%an%x00%h%x00%p',                    -- format
       'format:' .. date_format,                                         -- date format
       args.author and ('--author=%q'):format(args.author) or '',        -- author filter
       grep_arg,                                                        -- grep filter
       args.max_count and ('--max-count=%d'):format(args.max_count) or '',-- max count
       args.skip and ('--skip=%d'):format(args.skip) or '',              -- skip
+      file_args,                                                       -- files after --
     }
   else
     -- Show all branches (default/original behavior)
-    cli = [[git log --branches %s %s --pretty="%s" --date="%s" %s %s %s %s --date-order]]
+    cli = [[git log --branches %s %s %s --pretty="%s" --date="%s" %s %s %s %s --date-order%s]]
     cli_args = {
       args.revision_range or '',                                          -- revision range
       args.all and '--all' or '',                                         -- all branches?
+      table.concat(switches, " "),                                        -- new switches
       'format:%s%x00(%D)%x00%ad%x00%an%x00%h%x00%p',                      -- format
       'format:' .. date_format,                                           -- date format
       args.author and ('--author=%q'):format(args.author) or '',          -- author filter
       grep_arg,                                                          -- grep filter
       args.max_count and ('--max-count=%d'):format(args.max_count) or '', -- max count
       args.skip and ('--skip=%d'):format(args.skip) or '',                -- skip
+      file_args,                                                         -- files after --
     }
   end
 
