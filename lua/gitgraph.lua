@@ -2,6 +2,34 @@ local log = require('gitgraph.log')
 local config = require('gitgraph.config')
 local highlights = require('gitgraph.highlights')
 
+-- Fields table for search panel and editing
+local fields = {
+  { label = "Author (--author=): ", key = "author" },
+  { label = "Message (--grep=): ", key = "message" },
+  { label = "Follow renames (--follow): ", key = "follow" },
+  { label = "First parent (--first-parent): ", key = "first_parent" },
+  { label = "Show pulls (--show-pulls): ", key = "show_pulls" },
+  { label = "Reflog (--reflog): ", key = "reflog" },
+  { label = "Walk reflogs (--walk-reflogs): ", key = "walk_reflogs" },
+  { label = "All refs (--all): ", key = "all_refs" },
+  { label = "Only merges (--merges): ", key = "only_merges" },
+  { label = "No merges (--no-merges): ", key = "no_merges" },
+  { label = "Reverse (--reverse): ", key = "reverse" },
+  { label = "Cherry-pick (--cherry-pick): ", key = "cherry_pick" },
+  { label = "Left only (--left-only): ", key = "left_only" },
+  { label = "Right only (--right-only): ", key = "right_only" },
+  { label = "Revision range (++rev-range=): ", key = "rev_range" },
+  { label = "Base revision (++base=): ", key = "base" },
+  { label = "Max count (--max-count=): ", key = "max_count" },
+  { label = "Trace line (-L): ", key = "trace_line" },
+  { label = "Diff merges (--diff-merges=): ", key = "diff_merges" },
+  { label = "Grep (-G): ", key = "grep_G" },
+  { label = "Search occurrences (-S): ", key = "search_S" },
+  { label = "After (--after=): ", key = "after" },
+  { label = "Before (--before=): ", key = "before" },
+  { label = "Limit to files (--): ", key = "limit_files" },
+}
+
 local function get_current_branch()
   local handle = io.popen("git rev-parse --abbrev-ref HEAD")
   local branch = handle and handle:read("*l") or nil
@@ -17,6 +45,8 @@ local M = {
   last_selected_branch = nil,
   last_branch_args = { revision_range = get_current_branch(), all = false },  -- Track the last used branch filter
 }
+
+M.last_search_fields = M.last_search_fields or {}
 
 --- Setup
 ---@param user_config I.GGConfig
@@ -253,37 +283,22 @@ function M.open_search_sidebuf()
   vim.api.nvim_buf_set_option(buf, "filetype", "gitgraphsearch")
   vim.api.nvim_buf_set_option(buf, "swapfile", false)
   vim.api.nvim_buf_set_option(buf, "modifiable", true)
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-    "# GitGraph Search",
-    "",
-    "Author (--author=): ",
-    "Message (--grep=): ",
-    "Follow renames (--follow): ",
-    "First parent (--first-parent): ",
-    "Show pulls (--show-pulls): ",
-    "Reflog (--reflog): ",
-    "Walk reflogs (--walk-reflogs): ",
-    "All refs (--all): ",
-    "Only merges (--merges): ",
-    "No merges (--no-merges): ",
-    "Reverse (--reverse): ",
-    "Cherry-pick (--cherry-pick): ",
-    "Left only (--left-only): ",
-    "Right only (--right-only): ",
-    "Revision range (++rev-range=): ",
-    "Base revision (++base=): ",
-    "Max count (--max-count=): " .. tostring(M.config.max_count or 256),
-    "Trace line (-L): ",
-    "Diff merges (--diff-merges=): ",
-    "Grep (-G): ",
-    "Search occurrences (-S): ",
-    "After (--after=): ",
-    "Before (--before=): ",
-    "Limit to files (--): ",
+  -- Build lines with pre-filled values from M.last_search_fields
+  local lines = { "# GitGraph Search", "" }
+  for _, field in ipairs(fields) do
+    local val = M.last_search_fields[field.key] or ""
+    -- Special case for max_count: show default if not set
+    if field.key == "max_count" and val == "" then
+      val = tostring(M.config.max_count or 256)
+    end
+    table.insert(lines, field.label .. val)
+  end
+  vim.list_extend(lines, {
     "",
     "# Edit the fields above, then press <CR> on any line to search.",
     "# Press q to close this window.",
   })
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.api.nvim_win_set_cursor(win, {3, 8})
 
   -- Make buffer unmodifiable by default
@@ -369,6 +384,34 @@ function M._do_sidebuf_search()
   args.before = (before ~= "" and before) or nil
   args.limit_files = (limit_files ~= "" and limit_files) or nil
 
+  -- Persist last-used search field values
+  M.last_search_fields = {
+    author = author or "",
+    message = message or "",
+    follow = follow or "",
+    first_parent = first_parent or "",
+    show_pulls = show_pulls or "",
+    reflog = reflog or "",
+    walk_reflogs = walk_reflogs or "",
+    all_refs = all_refs or "",
+    only_merges = only_merges or "",
+    no_merges = no_merges or "",
+    reverse = reverse or "",
+    cherry_pick = cherry_pick or "",
+    left_only = left_only or "",
+    right_only = right_only or "",
+    rev_range = rev_range or "",
+    base = base or "",
+    max_count = max_count or "",
+    trace_line = trace_line or "",
+    diff_merges = diff_merges or "",
+    grep_G = grep_G or "",
+    search_S = search_S or "",
+    after = after or "",
+    before = before or "",
+    limit_files = limit_files or "",
+  }
+
   -- Find another window (not the search buffer) to draw the graph in
   local search_win = vim.api.nvim_get_current_win()
   local wins = vim.api.nvim_tabpage_list_wins(0)
@@ -410,13 +453,22 @@ function M.edit_search_field()
     return
   end
 
-  vim.ui.input({ prompt = "Enter value for " .. label:gsub(":%s*$", "") }, function(input)
+  vim.ui.input({ prompt = "Enter value for " .. label:gsub(":%s*$", ""), default = value }, function(input)
     if input == nil then return end
     -- Update only the value part
     local new_line = label .. input
     vim.api.nvim_set_option_value('modifiable', true, { buf = buf })
     vim.api.nvim_buf_set_lines(buf, row-1, row, false, { new_line })
     vim.api.nvim_set_option_value('modifiable', false, { buf = buf })
+
+    -- Update last_search_fields
+    for _, field in ipairs(fields) do
+      if label:find(field.label, 1, true) == 1 then
+        M.last_search_fields[field.key] = input or ""
+        break
+      end
+    end
+
     -- Trigger the search immediately after input
     require('gitgraph')._do_sidebuf_search()
   end)
