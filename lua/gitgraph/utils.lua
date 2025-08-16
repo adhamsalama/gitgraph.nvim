@@ -554,15 +554,18 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
   end, { buffer = buf_id, desc = 'select commit under cursor' })
 
   -- GitGraph-specific search and navigation keymaps (buffer-local only)
-  vim.keymap.set('n', '<leader>gsb', function()
+  -- Set up which-key group description for gV prefix
+  vim.keymap.set('n', '<leader>gV', '<nop>', { buffer = buf_id, desc = "GitGraph" })
+  
+  vim.keymap.set('n', '<leader>gVb', function()
     require('gitgraph').select_and_draw_branch()
-  end, { buffer = buf_id, desc = "GitGraph: Select branch to view" })
+  end, { buffer = buf_id, desc = "Select branch to view" })
 
-  vim.keymap.set('n', '<leader>gss', function()
+  vim.keymap.set('n', '<leader>gVs', function()
     require('gitgraph').open_search_sidebuf()
-  end, { buffer = buf_id, desc = "GitGraph: Search by author and/or message" })
+  end, { buffer = buf_id, desc = "Search by author and/or message" })
 
-  vim.keymap.set('n', '<leader>gsc', function()
+  vim.keymap.set('n', '<leader>gVc', function()
     require('gitgraph').select_and_draw_max_count()
   end, { buffer = buf_id, desc = "Set max commit count interactively" })
 
