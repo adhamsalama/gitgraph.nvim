@@ -424,7 +424,12 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
             require('gitgraph').draw({}, { all = true })
           end,
         },
-        {
+        -- Add more actions here as needed
+      }
+
+      -- Only show revert if we're viewing current branch and commit is reachable from HEAD
+      if is_viewing_current_branch() and commits_reachable_from_head({commit.hash}) then
+        table.insert(actions, {
           label = "Revert",
           fn = function(c)
             -- Check if commit is a merge commit (has more than one parent)
@@ -457,9 +462,8 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
               end
             end
           end,
-        },
-        -- Add more actions here as needed
-      }
+        })
+      end
 
       -- Add "Merge branch" action if this commit is the tip of any branch (not current branch)
       do
@@ -660,7 +664,11 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
             require('gitgraph').draw({}, { all = true })
           end,
         },
-        {
+      }
+
+      -- Only show revert range if we're viewing current branch and commits are reachable from HEAD
+      if is_viewing_current_branch() and commits_reachable_from_head(selected_hashes) then
+        table.insert(actions, {
           label = "Revert Range",
           fn = function(range)
             local range_str = range.from.hash .. "~1.." .. range.to.hash
@@ -668,8 +676,8 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
             vim.notify("Reverted range " .. range_str, vim.log.levels.INFO)
             require('gitgraph').draw({}, { all = true })
           end,
-        },
-      }
+        })
+      end
 
       -- Only offer destructive operations if safe conditions are met
       if should_show_destructive_ops then
