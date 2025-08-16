@@ -4,6 +4,28 @@ local core = require('gitgraph.core')
 
 local M = {}
 
+-- Helper: find existing GitGraph buffer in tabs and switch to it if found
+local function find_and_switch_to_gitgraph_tab(buf)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return false
+  end
+  
+  -- Check all tabs for the GitGraph buffer
+  for _, tabpage in ipairs(vim.api.nvim_list_tabpages()) do
+    for _, winid in ipairs(vim.api.nvim_tabpage_list_wins(tabpage)) do
+      local winbuf = vim.api.nvim_win_get_buf(winid)
+      if winbuf == buf then
+        -- Found the buffer in a window, switch to this tab and window
+        vim.api.nvim_set_current_tabpage(tabpage)
+        vim.api.nvim_set_current_win(winid)
+        return true
+      end
+    end
+  end
+  
+  return false
+end
+
 ---@param config I.GGConfig
 ---@param options I.DrawOptions
 ---@param args I.GitLogArgs
@@ -22,21 +44,46 @@ function M.draw(config, options, args)
     return
   end
 
-  -- reuse or create buffer
+  -- Handle buffer management and tab switching
+  local force_current_window = options and options.force_current_window
   local open_in_new_tab = options and options.open_in_new_tab
+  local buffer_was_switched = false
+  local should_create_tab = false
+  
   do
     if not M.buf or not vim.api.nvim_buf_is_valid(M.buf) then
+      -- No existing buffer, create new one and open in new tab
       M.buf = vim.api.nvim_create_buf(false, true)
-      open_in_new_tab = true
+      should_create_tab = true
+    else
+      -- Buffer exists, try to switch to existing tab unless forced to current window
+      if not force_current_window and find_and_switch_to_gitgraph_tab(M.buf) then
+        -- Successfully switched to existing tab
+        buffer_was_switched = true
+      else
+        -- Buffer exists but either:
+        -- 1. forced to current window, OR
+        -- 2. buffer not found in any tab (tab was closed)
+        if force_current_window then
+          -- User explicitly wants current window
+          vim.api.nvim_win_set_buf(0, M.buf)
+        else
+          -- Buffer exists but not displayed anywhere - create new tab
+          should_create_tab = true
+        end
+      end
     end
   end
-  if open_in_new_tab then
+  
+  -- Create new tab when needed and set buffer
+  if not buffer_was_switched and (should_create_tab or open_in_new_tab) then
     vim.cmd('tabnew') -- Open a new tab for the graph
+    vim.api.nvim_win_set_buf(0, M.buf)
   end
-  -- set active buffer to this one
+  
+  -- Get the buffer reference for the rest of the function
   local buf = M.buf
   assert(buf)
-  vim.api.nvim_win_set_buf(0, buf)
 
   vim.api.nvim_set_option_value('modifiable', true, { buf = buf })  -- make modifiable
   vim.api.nvim_set_option_value('buflisted', false, { buf = buf })  -- unlisted

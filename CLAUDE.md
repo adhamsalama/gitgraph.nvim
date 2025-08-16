@@ -107,3 +107,20 @@ The plugin includes several safety mechanisms for destructive operations:
 **HEAD Position Validation**: For multi-commit selections, destructive operations only appear when HEAD is the newest commit in the selection, preventing unsafe operations on historical ranges.
 
 These safety checks are implemented in `utils.lua:is_viewing_current_branch()` and `utils.lua:commits_reachable_from_head()`.
+
+## Buffer Management
+
+The plugin intelligently manages GitGraph buffers across tabs:
+
+**Smart Tab Switching**: When opening GitGraph, the plugin first checks if a GitGraph buffer already exists in another tab and switches to it, rather than opening in the current window.
+
+**New Tab Creation**: Creates a new tab when:
+- No GitGraph buffer exists yet
+- The `open_in_new_tab` option is explicitly set  
+- The buffer exists but isn't displayed in any tab (e.g., after closing the GitGraph tab)
+
+**Tab Close Handling**: When you close a GitGraph tab, the buffer remains in memory. Next time you open GitGraph, it will create a new tab instead of overlaying the current buffer.
+
+**Force Current Window**: Use `{ force_current_window = true }` in draw options to override tab switching and force GitGraph to open in the current window.
+
+Buffer management logic is implemented in `draw.lua:find_and_switch_to_gitgraph_tab()`.
