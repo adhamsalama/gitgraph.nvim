@@ -126,15 +126,18 @@ function M.git_log_pretty(args, date_format)
       parents[#parents + 1] = p
     end
 
-    data[#data + 1] = {
-      msg = msg,
-      branch_names = branch_names,
-      tags = tags,
-      author_date = author_date,
-      author_name = author_name,
-      hash = hash,
-      parents = parents,
-    }
+    -- Only add commit if all required fields are present
+    if msg and author_date and author_name and hash then
+      data[#data + 1] = {
+        msg = msg,
+        branch_names = branch_names,
+        tags = tags,
+        author_date = author_date,
+        author_name = author_name,
+        hash = hash,
+        parents = parents,
+      }
+    end
   end
 
   local dur = os.clock() - start

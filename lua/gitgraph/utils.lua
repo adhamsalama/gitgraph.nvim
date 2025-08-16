@@ -514,7 +514,10 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
                       vim.notify("Checkout failed:\n" .. table.concat(output, "\n"), vim.log.levels.ERROR)
                     else
                       vim.notify("Checked out branch '" .. branch.name .. "'", vim.log.levels.INFO)
-                      require('gitgraph').draw({}, { all = true })
+                      -- Update branch context and redraw with the new current branch
+                      local gitgraph = require('gitgraph')
+                      gitgraph.last_branch_args = { revision_range = branch.name, all = false }
+                      gitgraph.draw({}, { revision_range = branch.name })
                     end
                   end
                 end)
