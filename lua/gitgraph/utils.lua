@@ -8,6 +8,51 @@ function M.get_current_branch()
   return branch
 end
 
+-- Helper: check if commits are reachable from HEAD (i.e., on current branch)
+local function commits_reachable_from_head(commit_hashes)
+  if not commit_hashes or #commit_hashes == 0 then
+    return false
+  end
+  
+  for _, hash in ipairs(commit_hashes) do
+    local cmd = string.format("git merge-base --is-ancestor %s HEAD", hash)
+    local handle = io.popen(cmd .. " 2>/dev/null; echo $?")
+    if handle then
+      local result = handle:read("*l")
+      handle:close()
+      -- If exit code is not 0, commit is not reachable from HEAD
+      if result and result ~= "0" then
+        return false
+      end
+    else
+      return false
+    end
+  end
+  return true
+end
+
+-- Helper: check if we're currently viewing the current branch
+local function is_viewing_current_branch()
+  local gitgraph = require('gitgraph')
+  local current_branch = M.get_current_branch()
+  
+  if not gitgraph.last_branch_args then
+    return false
+  end
+  
+  -- If showing all branches, we're not viewing a specific current branch
+  if gitgraph.last_branch_args.all then
+    return false
+  end
+  
+  -- If viewing a specific branch, check if it matches current branch
+  if gitgraph.last_branch_args.revision_range then
+    return gitgraph.last_branch_args.revision_range == current_branch
+  end
+  
+  return false
+end
+
 -- Helper: get last N commit hashes on branch (newest to oldest)
 local function get_last_n_commits(branch, n)
   local cmd = string.format("git rev-list --max-count=%d %s", n, branch)
@@ -336,17 +381,25 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
     local row = vim.api.nvim_win_get_cursor(0)[1]
     local commit = M.get_commit_from_row(graph, row)
     if commit then
-      -- Get the actual checked-out HEAD short hash
-      local head_hash = nil
-      do
-        local handle = io.popen("git rev-parse --short=7 HEAD")
-        if handle then
-          head_hash = handle:read("*l")
-          handle:close()
+      -- Check if we should show destructive operations (reset)
+      local should_show_reset = false
+      
+      -- Only show reset if we're viewing the current branch AND commit is reachable from HEAD
+      if is_viewing_current_branch() then
+        local head_hash = nil
+        do
+          local handle = io.popen("git rev-parse --short=7 HEAD")
+          if handle then
+            head_hash = handle:read("*l")
+            handle:close()
+          end
+        end
+        
+        -- Check if this commit is HEAD and reachable (should always be true for HEAD)
+        if head_hash and commit.hash == head_hash and commits_reachable_from_head({commit.hash}) then
+          should_show_reset = true
         end
       end
-
-      local selection_ends_at_head = commit.hash == head_hash
 
 
       local actions = {
@@ -467,7 +520,7 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
         end
       end
 
-      if selection_ends_at_head then
+      if should_show_reset then
         table.insert(actions, {
           label = "Soft Reset (HEAD~1)",
           fn = function(c)
@@ -499,6 +552,19 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
       require('gitgraph.utils').select_commit_action(commit, actions)
     end
   end, { buffer = buf_id, desc = 'select commit under cursor' })
+
+  -- GitGraph-specific search and navigation keymaps (buffer-local only)
+  vim.keymap.set('n', '<leader>gsb', function()
+    require('gitgraph').select_and_draw_branch()
+  end, { buffer = buf_id, desc = "GitGraph: Select branch to view" })
+
+  vim.keymap.set('n', '<leader>gss', function()
+    require('gitgraph').open_search_sidebuf()
+  end, { buffer = buf_id, desc = "GitGraph: Search by author and/or message" })
+
+  vim.keymap.set('n', '<leader>gsc', function()
+    require('gitgraph').select_and_draw_max_count()
+  end, { buffer = buf_id, desc = "Set max commit count interactively" })
 
   vim.keymap.set('v', '<CR>', function()
     -- make sure visual selection is done
@@ -544,20 +610,26 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
         return
       end
 
-      -- Get the actual checked-out HEAD short hash (same length as your graph)
-      local head_hash = nil
-      do
-        local handle = io.popen("git rev-parse --short=7 HEAD")
-        if handle then
-          head_hash = handle:read("*l")
-          handle:close()
+      -- Check if we should show destructive operations (reset/squash) for multi-commit selection
+      local should_show_destructive_ops = false
+      
+      -- Only show destructive operations if:
+      -- 1. We're viewing the current branch
+      -- 2. All selected commits are reachable from HEAD
+      -- 3. The newest commit in selection (first in oldest-to-newest array) is HEAD
+      if is_viewing_current_branch() and #selected_hashes > 0 then
+        local head_hash = nil
+        do
+          local handle = io.popen("git rev-parse --short=7 HEAD")
+          if handle then
+            head_hash = handle:read("*l")
+            handle:close()
+          end
         end
-      end
-
-      local selection_ends_at_head = false
-      if #selected_hashes > 0 and head_hash then
-        if selected_hashes[1] == head_hash or selected_hashes[#selected_hashes] == head_hash then
-          selection_ends_at_head = true
+        
+        -- Check if newest commit is HEAD and all commits are reachable
+        if head_hash and selected_hashes[1] == head_hash and commits_reachable_from_head(selected_hashes) then
+          should_show_destructive_ops = true
         end
       end
 
@@ -596,8 +668,8 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
         },
       }
 
-      -- Only offer reset actions if the selection ends at HEAD
-      if selection_ends_at_head then
+      -- Only offer destructive operations if safe conditions are met
+      if should_show_destructive_ops then
         table.insert(actions, {
           label = "Soft Reset (last " .. #selected_hashes .. " commits)",
           fn = function(range)

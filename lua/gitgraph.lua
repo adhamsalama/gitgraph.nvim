@@ -246,35 +246,7 @@ if vim and vim.api and vim.api.nvim_create_user_command then
 end
 
 -- Optional default keymap: <leader>gsb
-if vim and vim.keymap then
-  vim.keymap.set('n', '<leader>gsb', function()
-    require('gitgraph').select_and_draw_branch()
-  end, { desc = "GitGraph: Select branch to view" })
-end
-
--- if vim and vim.keymap then
---   vim.keymap.set('n', '<leader>gsa', function()
---     require('gitgraph').select_and_draw_author()
---   end, { desc = "GitGraph: View commits by author" })
--- end
-
--- if vim and vim.keymap then
---   vim.keymap.set('n', '<leader>gsm', function()
---     require('gitgraph').select_and_draw_message()
---   end, { desc = "GitGraph: Search commits by message" })
--- end
-
-if vim and vim.keymap then
-  vim.keymap.set('n', '<leader>gss', function()
-    require('gitgraph').open_search_sidebuf()
-  end, { desc = "GitGraph: Search by author and/or message" })
-end
-
-if vim and vim.keymap then
-  vim.keymap.set('n', '<leader>gsc', function()
-    require('gitgraph').select_and_draw_max_count()
-  end, { desc = "Set max commit count interactively" })
-end
+-- (Moved to buffer-local mappings in utils.lua)
 
 
 -- Prompt for max_count and redraw the graph
