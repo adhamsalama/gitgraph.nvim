@@ -60,6 +60,8 @@ Key behaviours:
 - **Repo resolution** (`gitgraph._resolve_repo`): the graph's own repo when called from the graph/search
   buffer, else the current file's repo, else cwd. `draw` accepts `options.repo` to skip resolution.
   Every git command (including destructive actions) runs in `repo.root`.
+- **Cursor after a draw**: a chosen branch/range (`args.revision_range`) opens at row 1 (its newest commit);
+  the default views open on HEAD. Refreshes keep each window on the same commit.
 - **Auto-refresh**: watcher → `gitgraph.refresh()` re-runs `last_args` with `preserve_cursor` (cursor stays on
   the same commit). Deferred via `_dirty` while the graph is hidden or the user is in visual mode.
   If a shown ref disappeared, refresh falls back to local branches with one warning.
@@ -105,7 +107,14 @@ panel and fetch/pull/push, (4) graph upgrades (below).
 
 **Step 4: graph upgrades** (done). Decisions from the user: keep the two-lines-per-commit layout; badges
 are coloured pills; branch focus is a toggle (`<leader>gVf`), not automatic; commit actions live only in the
-`<CR>` menu (no direct keys). Open idea: ahead/behind counts on a local badge (`main ↑2 ↓1`).
+`<CR>` menu (no direct keys).
+
+Open items from the user (undecided):
+- Branch focus confused the user and only helps when the graph shows several branches (the workspace graph
+  follows one branch). Offered: a "Which branches contain this commit?" `<CR>` menu entry, and keeping,
+  changing or removing focus.
+- `<Space>` checks out in the Branches panel but is the user's leader key; offered to move checkout (e.g. `c`).
+- Ahead/behind counts on a local badge (`main ↑2 ↓1`).
 
 **Step 5** (the user tried a stash panel and had it removed: they don't need stash support)
 - Rebase/merge-in-progress banner with continue/abort/skip.
