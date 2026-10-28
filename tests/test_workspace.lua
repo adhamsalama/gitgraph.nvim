@@ -22,7 +22,7 @@ H.run(function()
     return #ws.status.lines > 3 and #gg.graph > 0
   end)
   check('opened in new tab', #vim.api.nvim_list_tabpages() == tabs_before + 1)
-  check('4 windows: status, branches, stash, graph (no preview pane)', #vim.api.nvim_tabpage_list_wins(0) == 4)
+  check('3 windows (no preview pane)', #vim.api.nvim_tabpage_list_wins(0) == 3)
   check('no J/K preview scroll keys', vim.fn.maparg('J', 'n', false, true).buffer ~= 1 and vim.fn.maparg('K', 'n', false, true).buffer ~= 1)
   check('focus on status', vim.api.nvim_get_current_buf() == ws.status.buf)
   local text = table.concat(vim.api.nvim_buf_get_lines(ws.status.buf, 0, -1, false), '\n')
@@ -137,7 +137,6 @@ H.run(function()
 
   -- graph panel: keys
   vim.api.nvim_set_current_win(ws.wins.status)
-  vim.api.nvim_feedkeys(vim.keycode('<Tab>'), 'x', false)
   vim.api.nvim_feedkeys(vim.keycode('<Tab>'), 'x', false)
   vim.api.nvim_feedkeys(vim.keycode('<Tab>'), 'x', false)
   check('tab moves to graph', vim.api.nvim_get_current_win() == ws.wins.graph)

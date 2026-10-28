@@ -5,11 +5,10 @@ local guard = require('gitgraph.guard')
 local panel_mod = require('gitgraph.workspace.panel')
 local status_mod = require('gitgraph.workspace.status')
 local branches_mod = require('gitgraph.workspace.branches')
-local stash_mod = require('gitgraph.workspace.stash')
 local jobs = require('gitgraph.workspace.jobs')
 local commit = require('gitgraph.workspace.commit')
 
---- The git workspace: a tab with the status, branches and stash panels on the left and the graph on the right.
+--- The git workspace: a tab with the status and branches panels on the left and the graph on the right.
 local M = {}
 
 ---@class I.Workspace
@@ -17,8 +16,7 @@ local M = {}
 ---@field repo I.Repo
 ---@field status I.StatusPanel
 ---@field branches I.BranchesPanel
----@field stash I.StashPanel
----@field wins { status: integer, branches: integer, stash: integer, graph: integer }
+---@field wins { status: integer, branches: integer, graph: integer }
 ---@field group integer
 ---@field graph_keys_buf? integer -- graph buffer the workspace keys are currently mapped on
 ---@field follow_timer uv.uv_timer_t -- debounces the graph following the branch under the cursor
@@ -38,14 +36,14 @@ local function graph_buf()
   return buf and vim.api.nvim_buf_is_valid(buf) and buf or nil
 end
 
---- Moves focus between the status, branches and stash panels and the graph.
+--- Moves focus between the status panel, the branches panel and the graph.
 ---@param step integer
 function M.cycle(step)
   local ws = M.state
   if not ws then
     return
   end
-  local order = vim.tbl_filter(vim.api.nvim_win_is_valid, { ws.wins.status, ws.wins.branches, ws.wins.stash, ws.wins.graph })
+  local order = vim.tbl_filter(vim.api.nvim_win_is_valid, { ws.wins.status, ws.wins.branches, ws.wins.graph })
   if #order == 0 then
     return
   end
@@ -94,13 +92,12 @@ function M.commit(amend)
   end)
 end
 
---- Reloads the status, branches and stash panels.
+--- Reloads the status and branches panels.
 function M.refresh_panels()
   local ws = M.state
   if ws then
     ws.status:refresh()
     ws.branches:refresh()
-    ws.stash:refresh()
   end
 end
 
@@ -289,7 +286,7 @@ local function teardown()
   end
   unmap_graph_keys()
   watch.unsubscribe('workspace')
-  for _, panel in ipairs({ ws.status, ws.branches, ws.stash }) do
+  for _, panel in ipairs({ ws.status, ws.branches }) do
     if panel and vim.api.nvim_buf_is_valid(panel.buf) then
       vim.api.nvim_buf_delete(panel.buf, { force = true })
     end
@@ -340,8 +337,6 @@ local function create_autocmds(ws)
       end
       if ev.buf == ws.status.buf then
         ws.status:refresh()
-      elseif ev.buf == ws.stash.buf then
-        ws.stash:refresh()
       elseif ev.buf == ws.branches.buf then
         ws.branches:refresh()
         follow_branch()
@@ -429,14 +424,12 @@ function M.open()
   vim.api.nvim_set_current_win(status_win)
   vim.cmd('rightbelow split')
   local branches_win = vim.api.nvim_get_current_win()
-  vim.cmd('rightbelow split')
-  local stash_win = vim.api.nvim_get_current_win()
 
   ---@type I.Workspace
   local ws = {
     tab = vim.api.nvim_get_current_tabpage(),
     repo = repo,
-    wins = { status = status_win, branches = branches_win, stash = stash_win, graph = graph_win },
+    wins = { status = status_win, branches = branches_win, graph = graph_win },
     group = vim.api.nvim_create_augroup('GitGraphWorkspace', { clear = true }),
     follow_timer = assert(vim.uv.new_timer()),
   }
@@ -449,13 +442,6 @@ function M.open()
 
   ws.branches = branches_mod.new(repo, workspace_keys(), M.refresh_panels, M.show_in_graph)
   vim.api.nvim_win_set_buf(branches_win, ws.branches.buf)
-
-  -- applying or popping changes the working tree; stashes show in the graph's --all view
-  ws.stash = stash_mod.new(repo, workspace_keys(), function()
-    M.refresh_panels()
-    require('gitgraph').refresh()
-  end)
-  vim.api.nvim_win_set_buf(stash_win, ws.stash.buf)
   if vim.api.nvim_buf_is_valid(placeholder) and #vim.fn.win_findbuf(placeholder) == 0 then
     pcall(vim.api.nvim_buf_delete, placeholder, {})
   end
@@ -471,15 +457,13 @@ function M.open()
   for _, win in pairs(ws.wins) do
     guard.protect(win)
   end
-  for _, win in ipairs({ status_win, branches_win, stash_win }) do
+  for _, win in ipairs({ status_win, branches_win }) do
     set_win_options(win, vim.tbl_extend('force', panel_opts, { cursorline = true, winfixwidth = true }))
   end
   vim.api.nvim_win_set_width(status_win, math.max(30, math.floor(vim.o.columns * 0.25)))
   vim.api.nvim_win_set_height(status_win, math.floor(vim.o.lines * 0.45))
-  vim.api.nvim_win_set_height(stash_win, math.max(4, math.floor(vim.o.lines * 0.15)))
   vim.wo[status_win].winbar = ' Status'
   vim.wo[branches_win].winbar = ' Branches'
-  vim.wo[stash_win].winbar = ' Stash'
 
   create_autocmds(ws)
 
