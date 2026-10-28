@@ -2,6 +2,7 @@ local log = require('gitgraph.log')
 local utils = require('gitgraph.utils')
 local core = require('gitgraph.core')
 local git = require('gitgraph.git')
+local guard = require('gitgraph.guard')
 
 ---@class I.DrawState
 ---@field buf integer?
@@ -47,6 +48,7 @@ local function create_buffer()
   vim.api.nvim_set_option_value('swapfile', false, { buf = buf })
   -- a stale buffer from a previous plugin load may still own the name
   pcall(vim.api.nvim_buf_set_name, buf, 'GitGraph')
+  guard.own(buf)
   return buf
 end
 
@@ -82,8 +84,10 @@ local function show_buffer(config, options)
 
   -- Create new tab when needed and set buffer
   if not buffer_was_switched and (should_create_tab or open_in_new_tab) then
-    vim.cmd('tabnew') -- Open a new tab for the graph
+    guard.tabnew() -- Open a new tab for the graph
     vim.api.nvim_win_set_buf(0, M.buf)
+    -- keep files opened "in the previous tab" (diffview's gf) from replacing the graph
+    guard.protect(vim.api.nvim_get_current_win())
     utils.name_tab(config.tab_name)
   end
 

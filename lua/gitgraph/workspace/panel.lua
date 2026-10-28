@@ -84,7 +84,9 @@ end
 ---@return I.Panel
 function M.new(spec)
   local buf = vim.api.nvim_create_buf(false, true)
-  vim.bo[buf].bufhidden = 'wipe'
+  -- not 'wipe': guard.lua puts the buffer back if a file replaces it; the workspace deletes it on close
+  vim.bo[buf].bufhidden = 'hide'
+  require('gitgraph.guard').own(buf)
   vim.bo[buf].swapfile = false
   vim.bo[buf].modifiable = false
   vim.bo[buf].filetype = spec.filetype

@@ -50,6 +50,7 @@ it buries real changes in the diff.
 | `lua/gitgraph/core.lua` | Layout algorithm: raw commits → rows/lines/highlights. `core.gitgraph(config, options, data)` takes already-fetched commits. Two buffer lines per commit (commit row + message row); `utils.get_commit_from_row` maps a line to its commit. |
 | `lua/gitgraph/refs.lua` | `%D` parsing (`git log --decorate=full`) into typed `I.Ref`s, ref badges (`badges`: `HEAD → main`, `main ⇄ origin` when the remote branch is on the same commit, `origin/HEAD` hidden) and lane colours (`assign_lanes`: first-parent walks from tips, trunk branches first; `color_index` = djb2 of the branch name). |
 | `lua/gitgraph/utils.lua` | Buffer keymaps for the graph (`<CR>` commit actions, visual `<CR>` range actions, `<leader>gV*`), safety checks for destructive actions, `git_action` helper, `name_tab`. |
+| `lua/gitgraph/guard.lua` | Protects the plugin's windows: `own(buf)` marks plugin buffers, `protect(win)` makes a window hand any other buffer back out (diffview's `gf` `:edit`s in the previous tab, i.e. ours). The file moves to the tab the plugin was opened from (`guard.tabnew` records it), else another non-plugin, non-diffview tab, else a new tab, keeping the cursor. |
 | `lua/gitgraph/watch.lua` | fs-event watcher on git_dir, `logs/` and `refs/` (recursive; Linux only sees top-level). `subscribe(name, fn, {index})`/`unsubscribe`; debounced per subscriber. Graph subscribes as `graph` (ignores index changes), workspace as `workspace` (includes index). |
 
 Key behaviours:
@@ -88,6 +89,9 @@ Design decisions worth keeping:
 - **The graph follows the branch under the cursor** in the Branches panel (150ms debounce). `show_in_graph`
   draws through `nvim_win_call` so BufEnter doesn't fire and the preview doesn't flicker.
 - Status refreshes on watcher events, BufWritePost of files in the repo, FocusGained, BufEnter and TabEnter.
+- Workspace windows and the graph's own tab are `guard.protect`ed; a graph drawn with `force_current_window`
+  is not. Panel and preview buffers are `bufhidden=hide` (so the guard can restore them) and are deleted in
+  `teardown`.
 - Prompts use `vim.ui.select({ 'Yes', 'No' })` / `vim.ui.input`; destructive actions always confirm.
 
 ## Roadmap

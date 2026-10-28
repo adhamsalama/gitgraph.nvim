@@ -27,7 +27,9 @@ Preview.__index = Preview
 ---@return I.Preview
 function M.new(root)
   local buf = vim.api.nvim_create_buf(false, true)
-  vim.bo[buf].bufhidden = 'wipe'
+  -- not 'wipe': guard.lua puts the buffer back if a file replaces it; close() deletes it
+  vim.bo[buf].bufhidden = 'hide'
+  require('gitgraph.guard').own(buf)
   vim.bo[buf].swapfile = false
   vim.bo[buf].modifiable = false
   pcall(vim.api.nvim_buf_set_name, buf, 'gitgraph://preview')

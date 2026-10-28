@@ -1,6 +1,7 @@
 local git = require('gitgraph.git')
 local watch = require('gitgraph.watch')
 local utils = require('gitgraph.utils')
+local guard = require('gitgraph.guard')
 local panel_mod = require('gitgraph.workspace.panel')
 local status_mod = require('gitgraph.workspace.status')
 local branches_mod = require('gitgraph.workspace.branches')
@@ -338,6 +339,11 @@ local function teardown()
   unmap_graph_keys()
   watch.unsubscribe('workspace')
   ws.preview:close()
+  for _, panel in ipairs({ ws.status, ws.branches }) do
+    if panel and vim.api.nvim_buf_is_valid(panel.buf) then
+      vim.api.nvim_buf_delete(panel.buf, { force = true })
+    end
+  end
   ws.follow_timer:stop()
   if not ws.follow_timer:is_closing() then
     ws.follow_timer:close()
@@ -466,7 +472,7 @@ function M.open()
     return
   end
 
-  vim.cmd('tabnew')
+  guard.tabnew()
   utils.name_tab(gg.config.tab_name)
   local placeholder = vim.api.nvim_get_current_buf()
   local status_win = vim.api.nvim_get_current_win()
@@ -520,6 +526,9 @@ function M.open()
     statuscolumn = '',
     wrap = false,
   }
+  for _, win in pairs(ws.wins) do
+    guard.protect(win)
+  end
   for _, win in ipairs({ status_win, branches_win }) do
     set_win_options(win, vim.tbl_extend('force', panel_opts, { cursorline = true, winfixwidth = true }))
   end
