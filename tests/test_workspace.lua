@@ -1,4 +1,4 @@
--- The workspace: layout, status panel staging/discarding, preview, commit editor, graph keys.
+-- The workspace: layout, status panel staging/discarding, commit editor, graph keys.
 local H = dofile(vim.env.GG_ROOT .. '/tests/helpers.lua')
 local S, p, check, wait = H.fixtures, H.p, H.check, H.wait
 
@@ -22,7 +22,8 @@ H.run(function()
     return #ws.status.lines > 3 and #gg.graph > 0
   end)
   check('opened in new tab', #vim.api.nvim_list_tabpages() == tabs_before + 1)
-  check('4 windows', #vim.api.nvim_tabpage_list_wins(0) == 4)
+  check('3 windows (no preview pane)', #vim.api.nvim_tabpage_list_wins(0) == 3)
+  check('no J/K preview scroll keys', vim.fn.maparg('J', 'n', false, true).buffer ~= 1 and vim.fn.maparg('K', 'n', false, true).buffer ~= 1)
   check('focus on status', vim.api.nvim_get_current_buf() == ws.status.buf)
   local text = table.concat(vim.api.nvim_buf_get_lines(ws.status.buf, 0, -1, false), '\n')
   p(text)
@@ -32,7 +33,6 @@ H.run(function()
   )
   check('graph in workspace', vim.api.nvim_win_get_buf(ws.wins.graph) == gg.buf and #vim.api.nvim_list_tabpages() == tabs_before + 1)
 
-  -- preview follows cursor
   local function row_of(pat)
     for i, l in ipairs(vim.api.nvim_buf_get_lines(ws.status.buf, 0, -1, false)) do
       if l:match(pat) then
@@ -40,20 +40,7 @@ H.run(function()
       end
     end
   end
-  vim.api.nvim_win_set_cursor(0, { row_of('M tracked.txt'), 0 })
-  vim.api.nvim_exec_autocmds('CursorMoved', {})
-  wait(1500, function()
-    return vim.api.nvim_buf_get_lines(ws.preview.buf, 0, -1, false)[1]:match('^diff')
-  end)
-  local pv = table.concat(vim.api.nvim_buf_get_lines(ws.preview.buf, 0, -1, false), '\n')
-  check('preview shows file diff', pv:match('%-b') and pv:match('%+B') and vim.bo[ws.preview.buf].filetype == 'diff')
-
   vim.api.nvim_win_set_cursor(0, { row_of('%? untracked.txt'), 0 })
-  vim.api.nvim_exec_autocmds('CursorMoved', {})
-  wait(1500, function()
-    return table.concat(vim.api.nvim_buf_get_lines(ws.preview.buf, 0, -1, false), '\n'):match('%+new')
-  end)
-  check('preview untracked file', table.concat(vim.api.nvim_buf_get_lines(ws.preview.buf, 0, -1, false), '\n'):match('%+new') ~= nil)
 
   -- stage untracked via <Space>
   vim.api.nvim_feedkeys(vim.keycode('<Space>'), 'x', false)
@@ -148,19 +135,12 @@ H.run(function()
   check('empty amend message aborted', git('log', '-1', '--format=%s'):match('workspace commit') and vim.api.nvim_buf_is_valid(cbuf))
   vim.cmd('close!')
 
-  -- graph panel: keys + preview
+  -- graph panel: keys
   vim.api.nvim_set_current_win(ws.wins.status)
   vim.api.nvim_feedkeys(vim.keycode('<Tab>'), 'x', false)
   vim.api.nvim_feedkeys(vim.keycode('<Tab>'), 'x', false)
   check('tab moves to graph', vim.api.nvim_get_current_win() == ws.wins.graph)
   check('workspace keys on graph', vim.fn.maparg('c', 'n', false, true).buffer == 1)
-  vim.api.nvim_win_set_cursor(0, { 1, 0 })
-  vim.api.nvim_exec_autocmds('CursorMoved', {})
-  wait(1500, function()
-    return vim.api.nvim_buf_get_lines(ws.preview.buf, 0, 1, false)[1]:match('^commit')
-  end)
-  local gp = table.concat(vim.api.nvim_buf_get_lines(ws.preview.buf, 0, -1, false), '\n')
-  check('graph preview shows commit', gp:match('^commit') and gp:match('workspace commit') and vim.bo[ws.preview.buf].filetype == 'git')
 
   -- leaving the tab unmaps graph keys
   vim.cmd('tabprevious')

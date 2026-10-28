@@ -32,7 +32,7 @@ H.run(function()
   wait(2000, function()
     return #B.refs > 0 and #ws.status.lines > 0
   end)
-  check('4 windows', #vim.api.nvim_tabpage_list_wins(0) == 4)
+  check('3 windows', #vim.api.nvim_tabpage_list_wins(0) == 3)
   local function lines()
     return vim.api.nvim_buf_get_lines(B.buf, 0, -1, false)
   end
@@ -52,14 +52,7 @@ H.run(function()
     vim.api.nvim_exec_autocmds('CursorMoved', {})
   end
 
-  -- preview
   goto_branch('unmerged')
-  wait(1500, function()
-    return vim.api.nvim_buf_get_lines(ws.preview.buf, 0, -1, false)[1]:match('Branch unmerged')
-      and table.concat(vim.api.nvim_buf_get_lines(ws.preview.buf, 0, -1, false)):match('unmerged work')
-  end)
-  local pv = table.concat(vim.api.nvim_buf_get_lines(ws.preview.buf, 0, -1, false), '\n')
-  check('preview header + log', pv:match('Branch unmerged') and pv:match('Compared to HEAD: 1 ahead, 1 behind') and pv:match('unmerged work'), pv:sub(1, 200))
 
   -- graph follows the branch under the cursor
   wait(1500, function()

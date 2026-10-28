@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Neovim plugin that started as an ASCII git graph (`:GitGraph…`, `require('gitgraph').draw()`) and is
 growing into a **lazygit-style git UI native to Neovim**: `:GitGraphWorkspace` opens a tab with status
-and branches panels, the graph, and a preview pane. diffview.nvim is used for full diffs, file history and
+and branches panels and the graph (no preview pane: the user had it removed). diffview.nvim is used for full diffs, file history and
 merge conflicts (optional; features degrade without it). Requires Neovim 0.10+ (`vim.system`, `vim.fs.root`,
 `vim.iter`).
 
@@ -29,7 +29,7 @@ GG_KEEP=1 tests/run.sh  # keep the temp dir (fixture repos, nvim.log, results.tx
 - `tests/helpers.lua` provides `H.check(name, ok, extra)`, `H.wait(ms, cond)`, `H.git(repo, ...)`,
   `H.p(...)` (print is lost headless) and `H.run(fn)`. Tests stub `vim.ui.select`/`vim.ui.input`/`vim.notify`
   when they need answers or want to inspect messages.
-- Most behaviour is async (git runs via `vim.system`, debounced previews/refreshes), so always
+- Most behaviour is async (git runs via `vim.system`, debounced refreshes), so always
   `H.wait(ms, cond)` on an observable result instead of asserting right after an action.
 - The original rendering suite (`require('gitgraph').test()`, `lua/gitgraph/tests.lua`) **already fails on
   upstream `main`** (scenario "foo"); it isn't part of `tests/run.sh`.
@@ -75,11 +75,10 @@ Key behaviours:
 
 | Module | Role |
 |---|---|
-| `init.lua` | Opens/closes the tab (named via `vim.t.name`, config `tab_name`), layout (Status and Branches on the left, graph top-right, preview bottom-right), workspace-wide keys, autocmds, `show_in_graph(args)`, graph winbar, `follow_branch`. |
+| `init.lua` | Opens/closes the tab (named via `vim.t.name`, config `tab_name`), layout (Status and Branches on the left, graph on the right), workspace-wide keys, autocmds, `show_in_graph(args)`, graph winbar, `follow_branch`. |
 | `panel.lua` | Base `Panel`: read-only buffer of `I.PanelLine`s (text, highlight marks, item per line), keymaps from `{lhs, fn(panel), desc, mode?}`, `item()`, `selected_items()`, `?` help float (`panel.help`). |
-| `status.lua` | `git status --porcelain=v1 -z --branch` parsing and rendering (Conflicts/Changes/Untracked/Staged), stage/unstage/discard, preview requests. Uses `--no-optional-locks` so its own refreshes don't rewrite the index (which would retrigger the watcher). |
+| `status.lua` | `git status --porcelain=v1 -z --branch` parsing and rendering (Conflicts/Changes/Untracked/Staged), stage/unstage/discard. Uses `--no-optional-locks` so its own refreshes don't rewrite the index (which would retrigger the watcher). |
 | `branches.lua` | `for-each-ref` parsing, Local/Remotes/Tags tabs, filter, checkout/create/delete/rename/upstream/rebase/merge. `select_next` keeps the cursor on a renamed or new branch. |
-| `preview.lua` | Debounced async preview of a `I.PreviewRequest` (`args`, `filetype`, `header`, `header_cmd`, `ok_codes`, or plain `text`). Skips rewriting identical content so the scroll position survives refreshes. |
 | `commit.lua` | Floating `gitcommit` buffer (`acwrite`); `:w` runs `git commit --cleanup=strip -F -` with the message on stdin (and `-c core.commentChar=#`). Reopens with the message if the commit fails after `:wq`. |
 | `jobs.lua` | Long-running commands (fetch/pull/push/rebase/merge/remote delete): background, `detach = true` and `GIT_TERMINAL_PROMPT=0` so credential prompts fail instead of hanging on Neovim's tty, `GIT_EDITOR=true`. Push offers set-upstream and force-with-lease after a rejection. |
 
@@ -91,10 +90,10 @@ Design decisions worth keeping:
   refreshes elsewhere). Number keys aren't used for panel switching because they're counts in Vim;
   `<Tab>`/`<S-Tab>` cycle Status → Branches → Graph.
 - **The graph follows the branch under the cursor** in the Branches panel (150ms debounce). `show_in_graph`
-  draws through `nvim_win_call` so BufEnter doesn't fire and the preview doesn't flicker.
+  draws through `nvim_win_call` so BufEnter doesn't fire and focus stays in the panel.
 - Status refreshes on watcher events, BufWritePost of files in the repo, FocusGained, BufEnter and TabEnter.
 - Workspace windows and the graph's own tab are `guard.protect`ed; a graph drawn with `force_current_window`
-  is not. Panel and preview buffers are `bufhidden=hide` (so the guard can restore them) and are deleted in
+  is not. Panel buffers are `bufhidden=hide` (so the guard can restore them) and are deleted in
   `teardown`.
 - Prompts use `vim.ui.select({ 'Yes', 'No' })` / `vim.ui.input`; destructive actions always confirm.
 
@@ -108,7 +107,7 @@ are coloured pills; branch focus is a toggle (`<leader>gVf`), not automatic; com
 `<CR>` menu (no direct keys). Open idea: ahead/behind counts on a local badge (`main ↑2 ↓1`).
 
 **Step 5**
-- Stash panel (stash, pop, apply, drop, preview).
+- Stash panel (stash, pop, apply, drop; no preview pane, so show a stash's diff via diffview).
 - Rebase/merge-in-progress banner with continue/abort/skip.
 - Undo through the reflog (commits/resets only; never discarded working-tree changes).
 - Polish: graph `K` hover with full message and `--stat`, `]r`/`[r` to jump between refs, infinite scroll via

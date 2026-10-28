@@ -6,11 +6,9 @@ local panel_mod = require('gitgraph.workspace.panel')
 local status_mod = require('gitgraph.workspace.status')
 local branches_mod = require('gitgraph.workspace.branches')
 local jobs = require('gitgraph.workspace.jobs')
-local preview_mod = require('gitgraph.workspace.preview')
 local commit = require('gitgraph.workspace.commit')
 
---- The git workspace: a tab with the status and branches panels, the graph and a preview of whatever is
---- under the cursor.
+--- The git workspace: a tab with the status and branches panels on the left and the graph on the right.
 local M = {}
 
 ---@class I.Workspace
@@ -18,8 +16,7 @@ local M = {}
 ---@field repo I.Repo
 ---@field status I.StatusPanel
 ---@field branches I.BranchesPanel
----@field preview I.Preview
----@field wins { status: integer, branches: integer, graph: integer, preview: integer }
+---@field wins { status: integer, branches: integer, graph: integer }
 ---@field group integer
 ---@field graph_keys_buf? integer -- graph buffer the workspace keys are currently mapped on
 ---@field follow_timer uv.uv_timer_t -- debounces the graph following the branch under the cursor
@@ -37,41 +34,6 @@ end
 local function graph_buf()
   local buf = require('gitgraph').buf
   return buf and vim.api.nvim_buf_is_valid(buf) and buf or nil
-end
-
----@param ws I.Workspace
----@return I.PreviewRequest?
-local function graph_preview_request(ws)
-  local win = ws.wins.graph
-  if not vim.api.nvim_win_is_valid(win) or vim.api.nvim_win_get_buf(win) ~= graph_buf() then
-    return nil
-  end
-  local row = vim.api.nvim_win_get_cursor(win)[1]
-  local ok, c = pcall(utils.get_commit_from_row, require('gitgraph').graph, row)
-  if not ok or not c then
-    return nil
-  end
-  return {
-    args = { 'show', '--no-ext-diff', '--stat', '--patch', '--format=fuller', '--diff-merges=first-parent', c.hash },
-    filetype = 'git',
-  }
-end
-
---- Points the preview at whatever is under the cursor in the focused panel.
----@param force? boolean -- reload even if it already shows that (the repo changed)
-local function update_preview(force)
-  local ws = M.state
-  if not ws or not in_workspace() then
-    return
-  end
-  local buf = vim.api.nvim_get_current_buf()
-  if buf == ws.status.buf then
-    ws.preview:show(ws.status:preview_request(), force)
-  elseif buf == ws.branches.buf then
-    ws.preview:show(ws.branches:preview_request(), force)
-  elseif buf == graph_buf() then
-    ws.preview:show(graph_preview_request(ws), force)
-  end
 end
 
 --- Moves focus between the status panel, the branches panel and the graph.
@@ -145,7 +107,6 @@ function M.refresh()
   end
   M.refresh_panels()
   require('gitgraph').refresh()
-  update_preview(true)
 end
 
 ---@param args I.GitLogArgs
@@ -166,7 +127,7 @@ function M.show_in_graph(args)
   if not ws or not vim.api.nvim_win_is_valid(ws.wins.graph) then
     return
   end
-  -- win_call doesn't fire BufEnter/WinEnter, so the preview keeps showing the focused panel
+  -- win_call doesn't fire BufEnter/WinEnter, so focus stays in the panel
   vim.api.nvim_win_call(ws.wins.graph, function()
     require('gitgraph').draw({ force_current_window = true, repo = ws.repo }, args)
   end)
@@ -235,20 +196,6 @@ local function workspace_keys()
         M.cycle(-1)
       end,
       desc = 'Previous panel',
-    },
-    {
-      'J',
-      function()
-        M.state.preview:scroll(true)
-      end,
-      desc = 'Scroll preview down',
-    },
-    {
-      'K',
-      function()
-        M.state.preview:scroll(false)
-      end,
-      desc = 'Scroll preview up',
     },
     {
       'f',
@@ -339,7 +286,6 @@ local function teardown()
   end
   unmap_graph_keys()
   watch.unsubscribe('workspace')
-  ws.preview:close()
   for _, panel in ipairs({ ws.status, ws.branches }) do
     if panel and vim.api.nvim_buf_is_valid(panel.buf) then
       vim.api.nvim_buf_delete(panel.buf, { force = true })
@@ -381,10 +327,7 @@ local function create_autocmds(ws)
 
   vim.api.nvim_create_autocmd('CursorMoved', {
     group = group,
-    callback = function()
-      update_preview()
-      follow_branch()
-    end,
+    callback = follow_branch,
   })
   vim.api.nvim_create_autocmd('BufEnter', {
     group = group,
@@ -400,7 +343,6 @@ local function create_autocmds(ws)
       elseif ev.buf == graph_buf() then
         map_graph_keys()
       end
-      update_preview()
     end,
   })
   vim.api.nvim_create_autocmd('TabLeave', {
@@ -479,8 +421,6 @@ function M.open()
   local status_win = vim.api.nvim_get_current_win()
   vim.cmd('rightbelow vsplit')
   local graph_win = vim.api.nvim_get_current_win()
-  vim.cmd('rightbelow split')
-  local preview_win = vim.api.nvim_get_current_win()
   vim.api.nvim_set_current_win(status_win)
   vim.cmd('rightbelow split')
   local branches_win = vim.api.nvim_get_current_win()
@@ -489,31 +429,18 @@ function M.open()
   local ws = {
     tab = vim.api.nvim_get_current_tabpage(),
     repo = repo,
-    wins = { status = status_win, branches = branches_win, graph = graph_win, preview = preview_win },
+    wins = { status = status_win, branches = branches_win, graph = graph_win },
     group = vim.api.nvim_create_augroup('GitGraphWorkspace', { clear = true }),
     follow_timer = assert(vim.uv.new_timer()),
   }
   M.state = ws
 
-  ws.preview = preview_mod.new(repo.root)
-  vim.api.nvim_win_set_buf(preview_win, ws.preview.buf)
-
   ws.status = status_mod.new(repo, workspace_keys(), function()
     ws.status:refresh()
   end)
-  ws.status.on_render = function()
-    if vim.api.nvim_get_current_buf() == ws.status.buf then
-      update_preview(true)
-    end
-  end
   vim.api.nvim_win_set_buf(status_win, ws.status.buf)
 
   ws.branches = branches_mod.new(repo, workspace_keys(), M.refresh_panels, M.show_in_graph)
-  ws.branches.on_render = function()
-    if vim.api.nvim_get_current_buf() == ws.branches.buf then
-      update_preview(true)
-    end
-  end
   vim.api.nvim_win_set_buf(branches_win, ws.branches.buf)
   if vim.api.nvim_buf_is_valid(placeholder) and #vim.fn.win_findbuf(placeholder) == 0 then
     pcall(vim.api.nvim_buf_delete, placeholder, {})
@@ -533,9 +460,7 @@ function M.open()
   for _, win in ipairs({ status_win, branches_win }) do
     set_win_options(win, vim.tbl_extend('force', panel_opts, { cursorline = true, winfixwidth = true }))
   end
-  set_win_options(preview_win, panel_opts)
   vim.api.nvim_win_set_width(status_win, math.max(30, math.floor(vim.o.columns * 0.25)))
-  vim.api.nvim_win_set_height(preview_win, math.floor(vim.o.lines * 0.45))
   vim.api.nvim_win_set_height(status_win, math.floor(vim.o.lines * 0.45))
   vim.wo[status_win].winbar = ' Status'
   vim.wo[branches_win].winbar = ' Branches'

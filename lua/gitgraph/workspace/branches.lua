@@ -244,35 +244,6 @@ function BranchesPanel:switch_tab(step)
   end
 end
 
----@return I.PreviewRequest?
-function BranchesPanel:preview_request()
-  local item = self:item()
-  if not item or not item.ref then
-    return nil
-  end
-  local ref = item.ref
-  local header = { ('%s %s'):format(({ ['local'] = 'Branch', remote = 'Remote branch', tag = 'Tag' })[ref.kind], ref.name) }
-  if ref.upstream ~= '' then
-    header[#header + 1] = 'Upstream: ' .. ref.upstream .. (ref.gone and ' (gone)' or '')
-  end
-  local header_cmd
-  if not ref.head then
-    header_cmd = {
-      args = { 'rev-list', '--left-right', '--count', 'HEAD...' .. ref.hash },
-      format = function(stdout)
-        local behind, ahead = stdout:match('(%d+)%s+(%d+)')
-        return ahead and { ('Compared to HEAD: %s ahead, %s behind'):format(ahead, behind) } or {}
-      end,
-    }
-  end
-  return {
-    header = header,
-    header_cmd = header_cmd,
-    args = { 'log', '--graph', '--decorate', '--format=%h%d %s (%cr) <%an>', '-n', '100', ref.hash },
-    filetype = 'git',
-  }
-end
-
 ---@param args string[]
 ---@param msg? string
 ---@return boolean ok

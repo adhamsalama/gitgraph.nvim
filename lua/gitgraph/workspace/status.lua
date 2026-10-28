@@ -332,38 +332,6 @@ function StatusPanel:refresh()
   end)
 end
 
---- What the preview pane should show for the item under the cursor.
----@return I.PreviewRequest?
-function StatusPanel:preview_request()
-  local item = self:item()
-  if not item then
-    return nil
-  end
-  if item.kind == 'branch' then
-    return { args = { 'log', '--oneline', '--decorate', '-n', '50' }, filetype = 'git' }
-  end
-  if item.kind == 'section' then
-    if item.section == 'staged' then
-      return { args = { 'diff', '--no-ext-diff', '--cached' }, filetype = 'diff' }
-    elseif item.section == 'untracked' then
-      local text = { 'Untracked files:', '' }
-      for _, entry in ipairs(self:entries_for(item)) do
-        text[#text + 1] = '  ' .. entry.path
-      end
-      return { text = text }
-    end
-    return { args = { 'diff', '--no-ext-diff' }, filetype = 'diff' }
-  end
-
-  local entry = item.entry
-  if entry.section == 'untracked' then
-    return { args = { 'diff', '--no-ext-diff', '--no-index', '--', '/dev/null', entry.path }, filetype = 'diff', ok_codes = { 1 } }
-  elseif entry.section == 'staged' then
-    return { args = vim.list_extend({ 'diff', '--no-ext-diff', '--cached', '-M', '--' }, paths_of({ entry })), filetype = 'diff' }
-  end
-  return { args = { 'diff', '--no-ext-diff', '--', entry.path }, filetype = 'diff' }
-end
-
 --- Opens diffview on the item under the cursor (all changes for headers); falls back to editing.
 function StatusPanel:open_diff()
   local item = self:item()
