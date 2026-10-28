@@ -7,6 +7,8 @@ local M = {}
 ---@field amend? boolean
 ---@field message? string[] -- initial message lines (restored after a failed commit)
 ---@field on_done? fun() -- called after a successful commit
+---@field title? string -- float title
+---@field submit? fun(message: string, done: fun(ok: boolean)) -- replaces `git commit` (e.g. reword)
 
 ---@param lines string[]
 ---@return boolean
@@ -37,7 +39,7 @@ local function initial_lines(repo, opts)
     '# Write the commit message. :w commits, :q aborts.',
     '# Lines starting with "#" are ignored.',
   })
-  local changes = git.lines(repo.root, { 'diff', '--cached', '--name-status', opts.amend and 'HEAD~1' or nil })
+  local changes = not opts.submit and git.lines(repo.root, { 'diff', '--cached', '--name-status', opts.amend and 'HEAD~1' or nil })
   if changes and #changes > 0 then
     lines[#lines + 1] = '#'
     lines[#lines + 1] = opts.amend and '# Changes in the amended commit:' or '# Changes to be committed:'
@@ -71,7 +73,7 @@ function M.open(repo, opts)
     row = math.floor((vim.o.lines - height) / 2) - 1,
     col = math.floor((vim.o.columns - width) / 2),
     border = 'rounded',
-    title = opts.amend and ' Amend commit ' or ' Commit ',
+    title = opts.title or (opts.amend and ' Amend commit ' or ' Commit '),
     title_pos = 'center',
   })
   vim.wo[win].wrap = true
@@ -96,6 +98,17 @@ function M.open(repo, opts)
       vim.bo[buf].modified = false
 
       local message = table.concat(lines, '\n')
+      if opts.submit then
+        opts.submit(message, function(ok)
+          committing = false
+          if ok and vim.api.nvim_win_is_valid(win) then
+            vim.api.nvim_win_close(win, true)
+          elseif not ok and vim.api.nvim_buf_is_valid(buf) then
+            vim.bo[buf].modified = true
+          end
+        end)
+        return
+      end
       -- the help lines above use "#", whatever the user's comment char is
       local args = { '-c', 'core.commentChar=#', 'commit', '--cleanup=strip', '-F', '-' }
       if opts.amend then

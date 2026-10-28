@@ -51,6 +51,7 @@ it buries real changes in the diff.
 | `lua/gitgraph/refs.lua` | `%D` parsing (`git log --decorate=full`) into typed `I.Ref`s, ref badges (`badges`: `HEAD → main`, `main ⇄ origin` when the remote branch is on the same commit, `origin/HEAD` hidden) and lane colours (`assign_lanes`: first-parent walks from tips, trunk branches first; `color_index` = djb2 of the branch name). |
 | `lua/gitgraph/utils.lua` | Buffer keymaps for the graph (`<CR>` commit actions, visual `<CR>` range actions, `<leader>gV*`), safety checks for destructive actions, `git_action` helper, `name_tab`. |
 | `lua/gitgraph/focus.lua` | Branch focus (`<leader>gVf` toggle): dims commits not reachable from the focused commit, from in-memory parents. Follows the commit's ref across redraws; dims nothing (but stays on) while its commit isn't in the graph or the repo differs. |
+| `lua/gitgraph/rewrite.lua` | `<CR>` menu entries fixup/reword/drop/move up/move down. `plan` builds a `git rebase -i` todo (only for commits reachable from HEAD on a branch, with no merges in the rebase range); `run` copies it in via `GIT_SEQUENCE_EDITOR=cp <file>` (reword: `GIT_EDITOR=cp <msgfile>`, message from the commit editor float's `submit` hook) through `jobs.run`. Drop and rewriting commits already on `@{upstream}` confirm first; a conflict leaves the rebase stopped with a continue/abort hint. |
 | `lua/gitgraph/guard.lua` | Protects the plugin's windows: `own(buf)` marks plugin buffers, `protect(win)` makes a window hand any other buffer back out (diffview's `gf` `:edit`s in the previous tab, i.e. ours). The file moves to the tab the plugin was opened from (`guard.tabnew` records it), else another non-plugin, non-diffview tab, else a new tab, keeping the cursor. |
 | `lua/gitgraph/watch.lua` | fs-event watcher on git_dir, `logs/` and `refs/` (recursive; Linux only sees top-level). `subscribe(name, fn, {index})`/`unsubscribe`; debounced per subscriber. Graph subscribes as `graph` (ignores index changes), workspace as `workspace` (includes index). |
 
@@ -100,17 +101,11 @@ Design decisions worth keeping:
 ## Roadmap
 
 Done: (1) async plumbing and auto-refresh, (2) workspace, status panel and commit editor, (3) branches
-panel and fetch/pull/push.
+panel and fetch/pull/push, (4) graph upgrades (below).
 
-**Step 4: graph upgrades**
-- Keep the two-lines-per-commit layout (commit row + message row). The user prefers it, so don't switch
-  to one line per commit.
-- Ref badges via extmarks (local / remote / tag / HEAD in distinct highlights; collapse `main` +
-  `origin/main` on the same commit into one badge). Today refs are one `(…)` text blob from `%D`.
-- Stable lane colours per branch (hash of the name).
-- Branch focus: with the cursor on a ref, dim commits not reachable from it, computed from in-memory parents.
-- Commit actions: fixup, reword, drop, move up/down via `git rebase -i` with a prepared todo
-  (`GIT_SEQUENCE_EDITOR` writing the todo; run through `jobs.run`).
+**Step 4: graph upgrades** (done). Decisions from the user: keep the two-lines-per-commit layout; badges
+are coloured pills; branch focus is a toggle (`<leader>gVf`), not automatic; commit actions live only in the
+`<CR>` menu (no direct keys). Open idea: ahead/behind counts on a local badge (`main ↑2 ↓1`).
 
 **Step 5**
 - Stash panel (stash, pop, apply, drop, preview).

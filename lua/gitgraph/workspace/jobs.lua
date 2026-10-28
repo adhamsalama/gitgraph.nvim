@@ -31,6 +31,7 @@ end
 ---@field title string -- e.g. "Pushing"
 ---@field on_done? fun(ok: boolean, res: I.GitResult)
 ---@field on_error? fun(res: I.GitResult): boolean -- return true if handled (no error notification)
+---@field env? table<string, string> -- added to (or overriding) the job environment
 
 --- Runs a git command in the background, one per title at a time.
 ---@param repo I.Repo
@@ -55,7 +56,7 @@ function M.run(repo, args, opts)
     if opts.on_done then
       opts.on_done(ok, res)
     end
-  end, JOB_OPTS)
+  end, opts.env and vim.tbl_deep_extend('force', JOB_OPTS, { env = opts.env }) or JOB_OPTS)
 end
 
 ---@param repo I.Repo

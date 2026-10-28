@@ -47,5 +47,19 @@ setup_fixtures() {
     git checkout -qb remote-only && git commit -q --allow-empty -m ro && git push -q origin remote-only 2>/dev/null
     git checkout -q main && git commit -q --allow-empty -m "upstream moved" && git push -q origin main 2>/dev/null
     cd ../work && git fetch -q && git commit -q --allow-empty -m "local diverged"
+    cd ../..
+
+    # rw: history rewriting. base -> side merged in -> c1 c2 (pushed) -> c3 c4 -> c5 c6 (both edit x,
+    # so swapping them conflicts). Each cN adds file N.
+    git init -q --bare -b main rw-origin.git
+    mkdir rw && cd rw && git init -q -b main
+    echo base > base && git add base && git commit -qm base
+    git checkout -qb side && echo s > s && git add s && git commit -qm side && git checkout -q main
+    git merge -q --no-ff side -m "merge side"
+    for i in 1 2 3 4; do echo $i > $i && git add $i && git commit -qm "c$i"; done
+    git remote add origin ../rw-origin.git && git push -q -u origin HEAD~2:refs/heads/main 2>/dev/null
+    git branch -q --set-upstream-to=origin/main
+    echo 5 > x && git add x && git commit -qm c5
+    echo 6 > x && git commit -qam c6
   )
 }

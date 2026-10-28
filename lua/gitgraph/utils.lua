@@ -521,6 +521,12 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
         end
       end
 
+      -- fixup/reword/drop/move via `git rebase -i` (only for commits on the current branch)
+      local repo = require('gitgraph').repo
+      if repo then
+        vim.list_extend(actions, require('gitgraph.rewrite').actions(repo, commit))
+      end
+
       if should_show_reset then
         table.insert(actions, {
           label = "Soft Reset (HEAD~1)",
