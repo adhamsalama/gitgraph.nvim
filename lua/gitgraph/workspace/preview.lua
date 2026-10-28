@@ -11,6 +11,8 @@ local DEBOUNCE_MS = 60
 ---@field filetype? string
 ---@field text? string[]
 ---@field ok_codes? integer[] -- exit codes that still mean success (`diff --no-index` exits 1)
+---@field header? string[] -- lines shown above the output
+---@field header_cmd? { args: string[], format: fun(stdout: string): string[] } -- more header lines, from git
 
 ---@class I.Preview
 ---@field buf integer
@@ -85,20 +87,42 @@ function Preview:show(req, force)
       if gen ~= self.generation then
         return
       end
-      git.run_async(self.root, req.args, function(res)
+      local header = vim.list_extend({}, req.header or {})
+
+      local function run_main()
+        git.run_async(self.root, req.args, function(res)
+          if gen ~= self.generation then
+            return
+          end
+          local ok = res.code == 0 or vim.tbl_contains(req.ok_codes or {}, res.code)
+          local out = ok and res.stdout or res.stderr
+          local lines = vim.split(out, '\n', { plain = true })
+          if lines[#lines] == '' then
+            lines[#lines] = nil
+          end
+          if #lines == 0 then
+            lines = { '(no changes)' }
+          end
+          if #header > 0 then
+            header[#header + 1] = ''
+            lines = vim.list_extend(header, lines)
+          end
+          self:write(lines, ok and (req.filetype or '') or '')
+        end)
+      end
+
+      if not req.header_cmd then
+        run_main()
+        return
+      end
+      git.run_async(self.root, req.header_cmd.args, function(res)
         if gen ~= self.generation then
           return
         end
-        local ok = res.code == 0 or vim.tbl_contains(req.ok_codes or {}, res.code)
-        local out = ok and res.stdout or res.stderr
-        local lines = vim.split(out, '\n', { plain = true })
-        if lines[#lines] == '' then
-          lines[#lines] = nil
+        if res.code == 0 then
+          vim.list_extend(header, req.header_cmd.format(res.stdout))
         end
-        if #lines == 0 then
-          lines = { '(no changes)' }
-        end
-        self:write(lines, ok and (req.filetype or '') or '')
+        run_main()
       end)
     end)
   )

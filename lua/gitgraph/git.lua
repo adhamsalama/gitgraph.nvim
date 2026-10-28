@@ -23,6 +23,8 @@ local M = {}
 
 ---@class I.GitRunOpts
 ---@field stdin? string
+---@field env? table<string, string> -- added to the environment
+---@field detach? boolean -- no controlling terminal, so git/ssh can't prompt on Neovim's tty
 
 ---@param root string?
 ---@param args string[]
@@ -58,7 +60,8 @@ end
 ---@param opts? I.GitRunOpts
 ---@return vim.SystemObj?
 function M.run_async(root, args, on_exit, opts)
-  local ok, proc = pcall(vim.system, git_cmd(root, args), { text = true, stdin = opts and opts.stdin }, function(res)
+  local sys_opts = { text = true, stdin = opts and opts.stdin, env = opts and opts.env, detach = opts and opts.detach }
+  local ok, proc = pcall(vim.system, git_cmd(root, args), sys_opts, function(res)
     vim.schedule(function()
       on_exit({ code = res.code, stdout = res.stdout or '', stderr = res.stderr or '' })
     end)

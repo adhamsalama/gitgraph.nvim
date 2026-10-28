@@ -182,6 +182,18 @@ function M.refresh()
   local options = vim.tbl_extend('force', M.last_options or {}, { preserve_cursor = true })
   require('gitgraph.draw').render(M.config, options, vim.deepcopy(M.last_args), M.repo, nil, function(graph)
     M.graph = graph
+  end, function(err)
+    -- a branch being shown was deleted or renamed: fall back to the default view instead of failing on
+    -- every refresh
+    if not (err:match('unknown revision') or err:match('ambiguous argument') or err:match('bad revision')) then
+      return false
+    end
+    local missing = err:match("argument '([^']+)'") or err:match("revision '([^']+)'") or M.last_args.revision_range or 'a revision'
+    vim.notify(('GitGraph: %s no longer exists, showing local branches'):format(missing), vim.log.levels.WARN)
+    M.last_args = { max_count = M.last_args.max_count }
+    M.last_branch_args = nil
+    M.refresh()
+    return true
   end)
 end
 

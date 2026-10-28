@@ -52,8 +52,9 @@ end
 
 --- Shows the GitGraph buffer in a window (creating the buffer and/or a tab for it when needed)
 --- and makes that window current.
+---@param config I.GGConfig
 ---@param options I.DrawOptions
-local function show_buffer(options)
+local function show_buffer(config, options)
   local force_current_window = options.force_current_window
   local open_in_new_tab = options.open_in_new_tab
   local buffer_was_switched = false
@@ -83,6 +84,7 @@ local function show_buffer(options)
   if not buffer_was_switched and (should_create_tab or open_in_new_tab) then
     vim.cmd('tabnew') -- Open a new tab for the graph
     vim.api.nvim_win_set_buf(0, M.buf)
+    utils.name_tab(config.tab_name)
   end
 
   -- set while the graph buffer is current, so FileType autocmds with `buffer = true` target it
@@ -153,7 +155,8 @@ end
 ---@param repo I.Repo
 ---@param win integer?
 ---@param on_done? fun(graph: I.Row[])
-function M.render(config, options, args, repo, win, on_done)
+---@param on_error? fun(err: string): boolean -- return true if handled (no error notification)
+function M.render(config, options, args, repo, win, on_done, on_error)
   generation = generation + 1
   local gen = generation
 
@@ -175,7 +178,10 @@ function M.render(config, options, args, repo, win, on_done)
     end
 
     if not data then
-      vim.notify('GitGraph: ' .. (err and err ~= '' and err or 'git log failed'), vim.log.levels.ERROR)
+      err = err and err ~= '' and err or 'git log failed'
+      if not (on_error and on_error(err)) then
+        vim.notify('GitGraph: ' .. err, vim.log.levels.ERROR)
+      end
       return
     end
 
@@ -207,6 +213,7 @@ function M.render(config, options, args, repo, win, on_done)
     if on_done then
       on_done(graph)
     end
+    vim.api.nvim_exec_autocmds('User', { pattern = 'GitGraphRendered', modeline = false })
   end)
 end
 
@@ -218,7 +225,7 @@ end
 ---@param on_done? fun(graph: I.Row[])
 function M.draw(config, options, args, repo, on_done)
   options = options or {}
-  show_buffer(options)
+  show_buffer(config, options)
   M.render(config, options, args, repo, vim.api.nvim_get_current_win(), on_done)
 end
 

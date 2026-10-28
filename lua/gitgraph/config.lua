@@ -43,6 +43,7 @@ local log = require('gitgraph.log')
 ---@field log_level integer
 ---@field max_count integer
 ---@field watch boolean -- redraw when HEAD or refs change (checkout, commit, fetch, ...)
+---@field tab_name string? -- name for tabs the plugin opens, stored in `vim.t.name` for tablines that show it
 
 local M = {}
 
@@ -50,6 +51,7 @@ local M = {}
 M.defaults = {
   max_count = 256,
   watch = true,
+  tab_name = 'GitGraph',
   symbols = {
     merge_commit = 'M',
     commit = '*',

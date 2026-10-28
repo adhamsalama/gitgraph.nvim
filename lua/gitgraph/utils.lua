@@ -370,6 +370,15 @@ function M.get_commit_from_row(graph, r)
   return commit
 end
 
+--- Names the current tab (`vim.t.name`, shown by tablines that support it instead of the tab number).
+---@param name string?
+function M.name_tab(name)
+  if name and name ~= '' then
+    vim.t.name = name
+    vim.cmd.redrawtabline()
+  end
+end
+
 --- Window-local options for the current window, which must be showing the graph.
 function M.apply_window_options()
   local options = {
