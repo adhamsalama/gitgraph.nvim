@@ -42,12 +42,14 @@ local log = require('gitgraph.log')
 ---@field hooks I.Hooks
 ---@field log_level integer
 ---@field max_count integer
+---@field watch boolean -- redraw when HEAD or refs change (checkout, commit, fetch, ...)
 
 local M = {}
 
 ---@type I.GGConfig
 M.defaults = {
   max_count = 256,
+  watch = true,
   symbols = {
     merge_commit = 'M',
     commit = '*',

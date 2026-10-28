@@ -1,6 +1,8 @@
 local log = require('gitgraph.log')
 local config = require('gitgraph.config')
 local highlights = require('gitgraph.highlights')
+local git = require('gitgraph.git')
+local watch = require('gitgraph.watch')
 
 -- Custom highlight group for bright green search input
 vim.api.nvim_set_hl(0, "GitGraphSearchInputBrightGreen", { fg = "#00ff00", bold = true })
@@ -23,49 +25,80 @@ local function colorize_search_inputs(buf)
   end
 end
 
--- Fields table for search panel and editing
+-- Fields table for search panel and editing.
+-- `arg` is the I.GitLogArgs key the field sets; `flag` fields are on when their value starts with "y".
+-- Fields without `arg` are handled separately in _do_sidebuf_search.
 local fields = {
-  { label = "Author (--author=): ", key = "author" },
-  { label = "Message (--grep=): ", key = "message" },
-  { label = "Follow renames (--follow): ", key = "follow" },
-  { label = "First parent (--first-parent): ", key = "first_parent" },
-  { label = "Show pulls (--show-pulls): ", key = "show_pulls" },
-  { label = "Reflog (--reflog): ", key = "reflog" },
-  { label = "Walk reflogs (--walk-reflogs): ", key = "walk_reflogs" },
-  { label = "All refs (--all): ", key = "all_refs" },
-  { label = "Only merges (--merges): ", key = "only_merges" },
-  { label = "No merges (--no-merges): ", key = "no_merges" },
-  { label = "Reverse (--reverse): ", key = "reverse" },
-  { label = "Cherry-pick (--cherry-pick): ", key = "cherry_pick" },
-  { label = "Left only (--left-only): ", key = "left_only" },
-  { label = "Right only (--right-only): ", key = "right_only" },
+  { label = "Author (--author=): ", key = "author", arg = "author" },
+  { label = "Message (--grep=): ", key = "message", arg = "grep" },
+  { label = "Follow renames (--follow): ", key = "follow", arg = "follow", flag = true },
+  { label = "First parent (--first-parent): ", key = "first_parent", arg = "first_parent", flag = true },
+  { label = "Show pulls (--show-pulls): ", key = "show_pulls", arg = "show_pulls", flag = true },
+  { label = "Reflog (--reflog): ", key = "reflog", arg = "reflog", flag = true },
+  { label = "Walk reflogs (--walk-reflogs): ", key = "walk_reflogs", arg = "walk_reflogs", flag = true },
+  { label = "All refs (--all): ", key = "all_refs", arg = "all", flag = true },
+  { label = "Only merges (--merges): ", key = "only_merges", arg = "merges", flag = true },
+  { label = "No merges (--no-merges): ", key = "no_merges", arg = "no_merges", flag = true },
+  { label = "Reverse (--reverse): ", key = "reverse", arg = "reverse", flag = true },
+  { label = "Cherry-pick (--cherry-pick): ", key = "cherry_pick", arg = "cherry_pick", flag = true },
+  { label = "Left only (--left-only): ", key = "left_only", arg = "left_only", flag = true },
+  { label = "Right only (--right-only): ", key = "right_only", arg = "right_only", flag = true },
   { label = "Revision range (++rev-range=): ", key = "rev_range" },
-  { label = "Base revision (++base=): ", key = "base" },
+  { label = "Base revision (++base=): ", key = "base", arg = "base" },
   { label = "Max count (--max-count=): ", key = "max_count" },
-  { label = "Trace line (-L): ", key = "trace_line" },
-  { label = "Diff merges (--diff-merges=): ", key = "diff_merges" },
-  { label = "Grep (-G): ", key = "grep_G" },
-  { label = "Search occurrences (-S): ", key = "search_S" },
-  { label = "After (--after=): ", key = "after" },
-  { label = "Before (--before=): ", key = "before" },
-  { label = "Limit to files (--): ", key = "limit_files" },
+  { label = "Trace line (-L): ", key = "trace_line", arg = "L" },
+  { label = "Diff merges (--diff-merges=): ", key = "diff_merges", arg = "diff_merges" },
+  { label = "Grep (-G): ", key = "grep_G", arg = "grep_G" },
+  { label = "Search occurrences (-S): ", key = "search_S", arg = "search_S" },
+  { label = "After (--after=): ", key = "after", arg = "after" },
+  { label = "Before (--before=): ", key = "before", arg = "before" },
+  { label = "Limit to files (--): ", key = "limit_files", arg = "limit_files" },
 }
-
-local function get_current_branch()
-  local handle = io.popen("git rev-parse --abbrev-ref HEAD")
-  local branch = handle and handle:read("*l") or nil
-  if handle then handle:close() end
-  return branch
-end
 
 local M = {
   config = config.defaults,
 
   buf = nil, ---@type integer?
   graph = {}, ---@type I.Row[]
+  repo = nil, ---@type I.Repo? -- repo of the last draw; every git call runs in its root
+  last_args = nil, ---@type I.GitLogArgs? -- args of the last draw, re-run by refresh()
+  last_options = nil, ---@type I.DrawOptions?
   last_selected_branch = nil,
-  last_branch_args = { revision_range = get_current_branch(), all = false },  -- Track the last used branch filter
+  last_branch_args = nil, ---@type I.GitLogArgs? -- Track the last used branch filter, set on draw
+  _dirty = false, -- the repo changed while the graph couldn't be redrawn
 }
+
+--- The branch filter that author/message/max-count searches start from.
+---@return I.GitLogArgs
+local function branch_filter()
+  if M.last_branch_args then
+    return vim.deepcopy(M.last_branch_args)
+  end
+  local branch = require('gitgraph.utils').get_current_branch()
+  return branch and { revision_range = branch, all = false } or { all = true }
+end
+
+--- Repo to draw: the graph's own repo when called from the graph or search buffer, otherwise the
+--- repo of the current file (falling back to the cwd).
+---@return I.Repo?
+---@return string? error
+local function resolve_repo()
+  local buf = vim.api.nvim_get_current_buf()
+  if M.repo and (buf == M.buf or buf == M._sidebuf) then
+    return M.repo
+  end
+
+  local dir = vim.fn.getcwd()
+  local name = vim.api.nvim_buf_get_name(buf)
+  if vim.bo[buf].buftype == '' and name ~= '' then
+    local parent = vim.fs.dirname(name)
+    if vim.fn.isdirectory(parent) == 1 then
+      dir = parent
+    end
+  end
+  return git.find_repo(dir)
+end
+M._resolve_repo = resolve_repo
 
 M.last_search_fields = M.last_search_fields or {}
 
@@ -95,29 +128,92 @@ function M.draw(options, args)
     args.max_count = tonumber(args.max_count)
   end
 
+  local repo, err = options and options.repo, nil
+  if not repo then
+    repo, err = resolve_repo()
+  end
+  if not repo then
+    log.error(err)
+    return
+  end
+  M.repo = repo
+  M.last_args = vim.deepcopy(args)
+  M.last_options = vim.deepcopy(options or {})
+  M._dirty = false
+
   local draw = require('gitgraph.draw')
-  draw.draw(M.config, options, args)
+  draw.draw(M.config, options, args, repo, function(graph)
+    M.graph = graph
+  end)
   M.buf = draw.buf
-  M.graph = draw.graph
 
   -- Track the last used branch filter for author search
   -- Only store relevant branch filter keys
-  M.last_branch_args = M.last_branch_args or {}
-  if args then
-    if args.revision_range then
-      M.last_branch_args = { revision_range = args.revision_range, all = false }
-    elseif args.all then
-      M.last_branch_args = { all = true }
-    else
-      -- If neither, store current branch as revision_range
-      local handle = io.popen("git rev-parse --abbrev-ref HEAD")
-      local branch = handle and handle:read("*l") or nil
-      if handle then handle:close() end
-      if branch then
-        M.last_branch_args = { revision_range = branch, all = false }
-      end
+  if args.revision_range then
+    M.last_branch_args = { revision_range = args.revision_range, all = false }
+  elseif args.all then
+    M.last_branch_args = { all = true }
+  else
+    -- If neither, store current branch as revision_range
+    local branch = require('gitgraph.utils').get_current_branch()
+    if branch then
+      M.last_branch_args = { revision_range = branch, all = false }
     end
   end
+
+  M._attach(M.buf)
+end
+
+--- Re-runs the last draw in place, keeping each window's cursor on the same commit.
+--- Deferred (see `_dirty`) while the graph is hidden or the user is mid-selection in it.
+function M.refresh()
+  if not M.repo or not M.last_args or not M.buf or not vim.api.nvim_buf_is_valid(M.buf) then
+    return
+  end
+
+  local hidden = #vim.fn.win_findbuf(M.buf) == 0
+  local busy = vim.api.nvim_get_current_buf() == M.buf and vim.fn.mode() ~= 'n'
+  if hidden or busy then
+    M._dirty = true
+    return
+  end
+  M._dirty = false
+
+  local options = vim.tbl_extend('force', M.last_options or {}, { preserve_cursor = true })
+  require('gitgraph.draw').render(M.config, options, vim.deepcopy(M.last_args), M.repo, nil, function(graph)
+    M.graph = graph
+  end)
+end
+
+--- Watches the repo for HEAD/ref changes and redraws deferred refreshes once the graph is usable.
+---@param buf integer?
+function M._attach(buf)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) or not M.repo then
+    return
+  end
+
+  if M.config.watch then
+    watch.start(M.repo)
+    watch.subscribe('graph', M.refresh)
+  end
+
+  local group = vim.api.nvim_create_augroup('GitGraphRefresh', { clear = true })
+  vim.api.nvim_create_autocmd({ 'BufEnter', 'BufWinEnter', 'ModeChanged' }, {
+    group = group,
+    buffer = buf,
+    callback = function()
+      if M._dirty then
+        M.refresh()
+      end
+    end,
+  })
+  vim.api.nvim_create_autocmd('BufWipeout', {
+    group = group,
+    buffer = buf,
+    callback = function()
+      watch.unsubscribe('graph')
+    end,
+  })
 end
 
 --- Tests the gitgraph plugin
@@ -171,7 +267,7 @@ end
 function M.select_and_draw_author()
   vim.ui.input({ prompt = "Enter author name (or part of it):" }, function(author)
     -- Start with the last branch args (or default to all branches)
-    local args = vim.deepcopy(M.last_branch_args or { all = true })
+    local args = branch_filter()
     local default_max = (M.config and M.config.max_count) or (config.defaults and config.defaults.max_count) or 256
     if not tonumber(args.max_count) or tonumber(args.max_count) <= 0 then
       args.max_count = default_max
@@ -194,7 +290,7 @@ end
 function M.select_and_draw_message()
   vim.ui.input({ prompt = "Enter commit message search (or part of it):" }, function(msg)
     -- Start with the last branch args (or default to all branches)
-    local args = vim.deepcopy(M.last_branch_args or { all = true })
+    local args = branch_filter()
     local default_max = (M.config and M.config.max_count) or (config.defaults and config.defaults.max_count) or 256
     if not tonumber(args.max_count) or tonumber(args.max_count) <= 0 then
       args.max_count = default_max
@@ -252,7 +348,7 @@ end
 -- Prompt for max_count and redraw the graph
 function M.select_and_draw_max_count()
   vim.ui.input({ prompt = "Enter max commit count (empty for default):" }, function(input)
-    local args = vim.deepcopy(M.last_branch_args or { all = true })
+    local args = branch_filter()
     local default_max = (M.config and M.config.max_count) or (config.defaults and config.defaults.max_count) or 256
     local n = tonumber(input)
     if n and n > 0 then
@@ -316,95 +412,45 @@ function M._do_sidebuf_search()
     vim.notify("Search buffer is not valid", vim.log.levels.ERROR)
     return
   end
-  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local author, message, follow, first_parent, show_pulls, reflog, walk_reflogs, all_refs, only_merges, no_merges, reverse, cherry_pick, left_only, right_only, rev_range, base, max_count, trace_line, diff_merges, grep_G, search_S, after, before, limit_files
-  for _, line in ipairs(lines) do
-    author = author or line:match("^Author %(%-%-author=%)%:%s*(.*)")
-    message = message or line:match("^Message %(%-%-grep=%)%:%s*(.*)")
-    follow = follow or line:match("^Follow renames %(%-%-follow%)%:%s*(.*)")
-    first_parent = first_parent or line:match("^First parent %(%-%-first%-parent%)%:%s*(.*)")
-    show_pulls = show_pulls or line:match("^Show pulls %(%-%-show%-pulls%)%:%s*(.*)")
-    reflog = reflog or line:match("^Reflog %(%-%-reflog%)%:%s*(.*)")
-    walk_reflogs = walk_reflogs or line:match("^Walk reflogs %(%-%-walk%-reflogs%)%:%s*(.*)")
-    all_refs = all_refs or line:match("^All refs %(%-%-all%)%:%s*(.*)")
-    only_merges = only_merges or line:match("^Only merges %(%-%-merges%)%:%s*(.*)")
-    no_merges = no_merges or line:match("^No merges %(%-%-no%-merges%)%:%s*(.*)")
-    reverse = reverse or line:match("^Reverse %(%-%-reverse%)%:%s*(.*)")
-    cherry_pick = cherry_pick or line:match("^Cherry%-pick %(%-%-cherry%-pick%)%:%s*(.*)")
-    left_only = left_only or line:match("^Left only %(%-%-left%-only%)%:%s*(.*)")
-    right_only = right_only or line:match("^Right only %(%-%-right%-only%)%:%s*(.*)")
-    rev_range = rev_range or line:match("^Revision range %(%+%+rev%-range=%)%:%s*(.*)")
-    base = base or line:match("^Base revision %(%+%+base=%)%:%s*(.*)")
-    max_count = max_count or line:match("^Max count %(%-%-max%-count=%)%:%s*(.*)")
-    trace_line = trace_line or line:match("^Trace line %(%-L%)%:%s*(.*)")
-    diff_merges = diff_merges or line:match("^Diff merges %(%-%-diff%-merges=%)%:%s*(.*)")
-    grep_G = grep_G or line:match("^Grep %(%-G%)%:%s*(.*)")
-    search_S = search_S or line:match("^Search occurrences %(%-S%)%:%s*(.*)")
-    after = after or line:match("^After %(%-%-after=%)%:%s*(.*)")
-    before = before or line:match("^Before %(%-%-before=%)%:%s*(.*)")
-    limit_files = limit_files or line:match("^Limit to files %(%-%-%)%:%s*(.*)")
+  -- Read each field's value from the line starting with its label (first match wins)
+  local values = {}
+  for _, line in ipairs(vim.api.nvim_buf_get_lines(buf, 0, -1, false)) do
+    for _, field in ipairs(fields) do
+      local label = vim.trim(field.label)
+      if values[field.key] == nil and vim.startswith(line, label) then
+        values[field.key] = (line:sub(#label + 1):gsub('^%s*', ''))
+        break
+      end
+    end
   end
 
-  local args = vim.deepcopy(M.last_branch_args or { all = true })
+  local args = branch_filter()
   local default_max = (M.config and M.config.max_count) or (config.defaults and config.defaults.max_count) or 256
-  local n = tonumber(max_count)
+  local n = tonumber(values.max_count)
   if n and n > 0 then
     args.max_count = n
   else
     args.max_count = default_max
   end
 
-  args.author = (author ~= "" and author) or nil
-  args.grep = (message ~= "" and message) or nil
-  args.follow = (follow and follow:lower():match("^y")) and true or nil
-  args.first_parent = (first_parent and first_parent:lower():match("^y")) and true or nil
-  args.show_pulls = (show_pulls and show_pulls:lower():match("^y")) and true or nil
-  args.reflog = (reflog and reflog:lower():match("^y")) and true or nil
-  args.walk_reflogs = (walk_reflogs and walk_reflogs:lower():match("^y")) and true or nil
-  args.all = (all_refs and all_refs:lower():match("^y")) and true or nil
-  args.merges = (only_merges and only_merges:lower():match("^y")) and true or nil
-  args.no_merges = (no_merges and no_merges:lower():match("^y")) and true or nil
-  args.reverse = (reverse and reverse:lower():match("^y")) and true or nil
-  args.cherry_pick = (cherry_pick and cherry_pick:lower():match("^y")) and true or nil
-  args.left_only = (left_only and left_only:lower():match("^y")) and true or nil
-  args.right_only = (right_only and right_only:lower():match("^y")) and true or nil
-  args.revision_range = (rev_range ~= "" and rev_range) or args.revision_range
-  args.base = (base ~= "" and base) or nil
-  args.L = (trace_line ~= "" and trace_line) or nil
-  args.diff_merges = (diff_merges ~= "" and diff_merges) or nil
-  args.grep_G = (grep_G ~= "" and grep_G) or nil
-  args.search_S = (search_S ~= "" and search_S) or nil
-  args.after = (after ~= "" and after) or nil
-  args.before = (before ~= "" and before) or nil
-  args.limit_files = (limit_files ~= "" and limit_files) or nil
+  for _, field in ipairs(fields) do
+    local value = values[field.key] or ""
+    if field.flag then
+      args[field.arg] = value:lower():match("^y") and true or nil
+    elseif field.arg then
+      args[field.arg] = value ~= "" and value or nil
+    end
+  end
+  -- an empty range keeps the current branch filter
+  if values.rev_range and values.rev_range ~= "" then
+    args.revision_range = values.rev_range
+  end
 
   -- Persist last-used search field values
-  M.last_search_fields = {
-    author = author or "",
-    message = message or "",
-    follow = follow or "",
-    first_parent = first_parent or "",
-    show_pulls = show_pulls or "",
-    reflog = reflog or "",
-    walk_reflogs = walk_reflogs or "",
-    all_refs = all_refs or "",
-    only_merges = only_merges or "",
-    no_merges = no_merges or "",
-    reverse = reverse or "",
-    cherry_pick = cherry_pick or "",
-    left_only = left_only or "",
-    right_only = right_only or "",
-    rev_range = rev_range or "",
-    base = base or "",
-    max_count = max_count or "",
-    trace_line = trace_line or "",
-    diff_merges = diff_merges or "",
-    grep_G = grep_G or "",
-    search_S = search_S or "",
-    after = after or "",
-    before = before or "",
-    limit_files = limit_files or "",
-  }
+  M.last_search_fields = {}
+  for _, field in ipairs(fields) do
+    M.last_search_fields[field.key] = values[field.key] or ""
+  end
 
   -- Find another window (not the search buffer) to draw the graph in
   local search_win = vim.api.nvim_get_current_win()

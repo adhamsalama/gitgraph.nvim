@@ -14,18 +14,36 @@ local M = {}
 ---@field revision_range? string
 ---@field max_count? integer
 ---@field skip? integer
+---@field author? string
+---@field grep? string
+---@field follow? boolean
+---@field first_parent? boolean
+---@field show_pulls? boolean
+---@field reflog? boolean
+---@field walk_reflogs? boolean
+---@field merges? boolean
+---@field no_merges? boolean
+---@field reverse? boolean
+---@field cherry_pick? boolean
+---@field left_only? boolean
+---@field right_only? boolean
+---@field base? string
+---@field L? string
+---@field diff_merges? string
+---@field grep_G? string
+---@field search_S? string
+---@field after? string
+---@field before? string
+---@field limit_files? string
 
 ---@param config I.GGConfig
 ---@param options I.DrawOptions
----@param args I.GitLogArgs
+---@param data I.RawCommit[] -- from `git.git_log_pretty`
 ---@return I.Row[]
 ---@return string[]
 ---@return I.Highlight[]
 ---@return integer?
-function M.gitgraph(config, options, args)
-  --- depends on `git`
-  local data = require('gitgraph.git').git_log_pretty(args, config.format.timestamp)
-
+function M.gitgraph(config, options, data)
   --- does the magic
   local start = os.clock()
   local graph, lines, highlights, head_loc = M._gitgraph(data, options, config.symbols, config.format.fields)
@@ -438,6 +456,10 @@ function M._gitgraph(raw_commits, opt, sym, fields)
   ---@class I.DrawOptions
   ---@field mode? 'debug' | 'test'
   ---@field pretty? boolean
+  ---@field force_current_window? boolean
+  ---@field open_in_new_tab? boolean
+  ---@field preserve_cursor? boolean -- keep each window on the same commit instead of jumping to HEAD
+  ---@field repo? I.Repo -- draw this repo instead of resolving it from the current buffer
 
   ---@param graph I.Row[]
   ---@param options I.DrawOptions

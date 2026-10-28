@@ -1,15 +1,29 @@
 local log = require('gitgraph.log')
 local utils = require('gitgraph.utils')
 local core = require('gitgraph.core')
+local git = require('gitgraph.git')
 
-local M = {}
+---@class I.DrawState
+---@field buf integer?
+---@field graph I.Row[]
+local M = {
+  buf = nil,
+  graph = {},
+}
+
+M.ns = vim.api.nvim_create_namespace('gitgraph')
+
+-- Bumped on every render so a slow `git log` can never overwrite the result of a newer one.
+local generation = 0
+---@type vim.SystemObj?
+local pending = nil
 
 -- Helper: find existing GitGraph buffer in tabs and switch to it if found
 local function find_and_switch_to_gitgraph_tab(buf)
   if not buf or not vim.api.nvim_buf_is_valid(buf) then
     return false
   end
-  
+
   -- Check all tabs for the GitGraph buffer
   for _, tabpage in ipairs(vim.api.nvim_list_tabpages()) do
     for _, winid in ipairs(vim.api.nvim_tabpage_list_wins(tabpage)) do
@@ -22,141 +36,190 @@ local function find_and_switch_to_gitgraph_tab(buf)
       end
     end
   end
-  
+
   return false
 end
 
----@param config I.GGConfig
+---@return integer
+local function create_buffer()
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_option_value('modifiable', false, { buf = buf })
+  vim.api.nvim_set_option_value('swapfile', false, { buf = buf })
+  -- a stale buffer from a previous plugin load may still own the name
+  pcall(vim.api.nvim_buf_set_name, buf, 'GitGraph')
+  return buf
+end
+
+--- Shows the GitGraph buffer in a window (creating the buffer and/or a tab for it when needed)
+--- and makes that window current.
 ---@param options I.DrawOptions
----@param args I.GitLogArgs
-function M.draw(config, options, args)
-  M.graph = {}
-
-  local so = os.clock()
-
-  if utils.check_cmd('git --version') then
-    log.error('git command not found, please install it')
-    return
-  end
-
-  if utils.check_cmd('git status') then
-    log.error('does not seem to be a valid git repo')
-    return
-  end
-
-  -- Handle buffer management and tab switching
-  local force_current_window = options and options.force_current_window
-  local open_in_new_tab = options and options.open_in_new_tab
+local function show_buffer(options)
+  local force_current_window = options.force_current_window
+  local open_in_new_tab = options.open_in_new_tab
   local buffer_was_switched = false
   local should_create_tab = false
-  
-  do
-    if not M.buf or not vim.api.nvim_buf_is_valid(M.buf) then
-      -- No existing buffer, create new one and open in new tab
-      M.buf = vim.api.nvim_create_buf(false, true)
-      should_create_tab = true
+
+  if not M.buf or not vim.api.nvim_buf_is_valid(M.buf) then
+    -- No existing buffer, create new one and open in new tab
+    M.buf = create_buffer()
+    M.graph = {}
+    if force_current_window then
+      vim.api.nvim_win_set_buf(0, M.buf)
     else
-      -- Buffer exists, try to switch to existing tab unless forced to current window
-      if not force_current_window and find_and_switch_to_gitgraph_tab(M.buf) then
-        -- Successfully switched to existing tab
-        buffer_was_switched = true
-      else
-        -- Buffer exists but either:
-        -- 1. forced to current window, OR
-        -- 2. buffer not found in any tab (tab was closed)
-        if force_current_window then
-          -- User explicitly wants current window
-          vim.api.nvim_win_set_buf(0, M.buf)
-        else
-          -- Buffer exists but not displayed anywhere - create new tab
-          should_create_tab = true
-        end
-      end
+      should_create_tab = true
     end
+  elseif not force_current_window and find_and_switch_to_gitgraph_tab(M.buf) then
+    -- Buffer exists, switched to the tab already showing it
+    buffer_was_switched = true
+  elseif force_current_window then
+    -- User explicitly wants current window
+    vim.api.nvim_win_set_buf(0, M.buf)
+  else
+    -- Buffer exists but not displayed anywhere (tab was closed) - create new tab
+    should_create_tab = true
   end
-  
+
   -- Create new tab when needed and set buffer
   if not buffer_was_switched and (should_create_tab or open_in_new_tab) then
     vim.cmd('tabnew') -- Open a new tab for the graph
     vim.api.nvim_win_set_buf(0, M.buf)
   end
-  
-  -- Get the buffer reference for the rest of the function
-  local buf = M.buf
-  assert(buf)
 
-  vim.api.nvim_set_option_value('modifiable', true, { buf = buf })  -- make modifiable
-  vim.api.nvim_set_option_value('buflisted', false, { buf = buf })  -- unlisted
-  vim.api.nvim_set_option_value('wrap', false, { scope = 'local' }) -- turn off linewrap
+  -- set while the graph buffer is current, so FileType autocmds with `buffer = true` target it
+  if vim.bo[M.buf].filetype ~= 'gitgraph' then
+    vim.bo[M.buf].filetype = 'gitgraph'
+  end
+  utils.apply_window_options()
+end
 
-  vim.api.nvim_buf_clear_namespace(buf, -1, 0, -1)                  -- clear highlights
+--- Index of the commit row for `hash` in `graph`, if present.
+---@param graph I.Row[]
+---@param hash string
+---@return integer?
+local function find_commit_row(graph, hash)
+  -- commits sit on odd rows, the message/connector row follows each one
+  for i = 1, #graph, 2 do
+    local commit = graph[i].commit
+    if commit and commit.hash == hash then
+      return i
+    end
+  end
+end
 
-  -- clear
-  do
-    local cl_start = os.clock()
-    vim.api.nvim_buf_set_lines(buf, 0, -1, false, {})
-    local clear_dur = os.clock() - cl_start
-    log.info('clear dur', clear_dur * 1000, 'ms')
+---@class I.CursorAnchor
+---@field win integer
+---@field hash string
+---@field offset integer -- 0 on the commit row, 1 on its message row
+---@field col integer
+
+---@param buf integer
+---@return I.CursorAnchor[]
+local function cursor_anchors(buf)
+  local anchors = {}
+  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+    local pos = vim.api.nvim_win_get_cursor(win)
+    local ok, commit = pcall(utils.get_commit_from_row, M.graph, pos[1])
+    if ok and commit then
+      anchors[#anchors + 1] = { win = win, hash = commit.hash, offset = (pos[1] - 1) % 2, col = pos[2] }
+    end
+  end
+  return anchors
+end
+
+---@param buf integer
+---@param lines string[]
+---@param highlights I.Highlight[]
+local function write_buffer(buf, lines, highlights)
+  vim.api.nvim_set_option_value('modifiable', true, { buf = buf })
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.api.nvim_set_option_value('modifiable', false, { buf = buf })
+
+  vim.api.nvim_buf_clear_namespace(buf, M.ns, 0, -1)
+  for _, hl in ipairs(highlights) do
+    vim.api.nvim_buf_set_extmark(buf, M.ns, hl.row - 1, hl.start, {
+      end_col = hl.stop + 1,
+      hl_group = hl.hg,
+      strict = false,
+    })
+  end
+end
+
+--- Fetches commits for `args` and renders them into the GitGraph buffer.
+--- With `options.preserve_cursor`, every window keeps its cursor on the same commit; otherwise
+--- `win` (when still showing the graph) is moved to HEAD.
+---@param config I.GGConfig
+---@param options I.DrawOptions
+---@param args I.GitLogArgs
+---@param repo I.Repo
+---@param win integer?
+---@param on_done? fun(graph: I.Row[])
+function M.render(config, options, args, repo, win, on_done)
+  generation = generation + 1
+  local gen = generation
+
+  if pending then
+    pcall(pending.kill, pending, 15)
   end
 
-  -- extract graph data
-  local graph, lines, highlights, head_loc = core.gitgraph(config, options, args)
-  M.graph = graph
+  local so = vim.uv.hrtime()
 
-  -- -- Insert branch name header
-  -- local header
-  -- if args and args.revision_range and not args.all then
-  --   header = "GitGraph: Branch — " .. args.revision_range
-  -- elseif args and args.all then
-  --   header = "GitGraph: All branches"
-  -- else
-  --   -- Neither all nor revision_range: show current branch
-  --   local handle = io.popen("git rev-parse --abbrev-ref HEAD")
-  --   local branch = handle and handle:read("*l") or "unknown"
-  --   if handle then handle:close() end
-  --   header = "GitGraph: Branch — " .. branch
-  -- end
+  pending = git.git_log_pretty(repo.root, args, config.format.timestamp, function(data, err)
+    if gen ~= generation then
+      return
+    end
+    pending = nil
 
-  -- Insert header as a separate line, but do NOT shift highlight rows
-  -- table.insert(lines, 1, header)
-
-  local start = os.clock()
-  -- put graph data in buffer
-  do
-    vim.api.nvim_buf_set_lines(buf, 0, #lines, false, lines) -- text
-
-    -- highlights
-    local function high()
-      for _, hl in ipairs(highlights) do
-        local offset = 1
-        vim.api.nvim_buf_add_highlight(buf, -1, hl.hg, hl.row - 1, hl.start - 1 + offset, hl.stop + offset)
-      end
+    local buf = M.buf
+    if not buf or not vim.api.nvim_buf_is_valid(buf) then
+      return
     end
 
-    local co = coroutine.create(high)
-
-    local function wait_poll()
-      if coroutine.status(co) ~= 'dead' then
-        coroutine.resume(co)
-        vim.defer_fn(wait_poll, 16) -- Adjust delay as needed
-      end
+    if not data then
+      vim.notify('GitGraph: ' .. (err and err ~= '' and err or 'git log failed'), vim.log.levels.ERROR)
+      return
     end
 
-    vim.defer_fn(wait_poll, 1)
-  end
+    -- remember which commit each window is on before the rows change
+    local anchors = options.preserve_cursor and cursor_anchors(buf) or {}
 
-  do
-    local cursor_line = head_loc
-    vim.api.nvim_win_set_cursor(0, { cursor_line, 0 })
-  end
+    local start = vim.uv.hrtime()
+    local graph, lines, highlights, head_loc = core.gitgraph(config, options, data)
+    M.graph = graph
 
-  utils.apply_buffer_options(buf)
-  utils.apply_buffer_mappings(buf, M.graph, config.hooks)
-  local dur = os.clock() - start
-  log.info('rest dur:', dur * 1000, 'ms')
+    write_buffer(buf, lines, highlights)
 
-  local tot_dur = os.clock() - so
-  log.info('total dur:', tot_dur * 1000, 'ms')
+    if options.preserve_cursor then
+      for _, anchor in ipairs(anchors) do
+        local row = find_commit_row(graph, anchor.hash)
+        if row and vim.api.nvim_win_is_valid(anchor.win) and vim.api.nvim_win_get_buf(anchor.win) == buf then
+          vim.api.nvim_win_set_cursor(anchor.win, { math.min(row + anchor.offset, #lines), anchor.col })
+        end
+      end
+    elseif win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
+      vim.api.nvim_win_set_cursor(win, { math.min(head_loc or 1, math.max(#lines, 1)), 0 })
+    end
+
+    utils.apply_buffer_mappings(buf, graph, config.hooks)
+
+    log.info('render dur:', (vim.uv.hrtime() - start) / 1e6, 'ms')
+    log.info('total dur:', (vim.uv.hrtime() - so) / 1e6, 'ms')
+
+    if on_done then
+      on_done(graph)
+    end
+  end)
+end
+
+--- Shows the GitGraph buffer and renders `args` into it.
+---@param config I.GGConfig
+---@param options I.DrawOptions
+---@param args I.GitLogArgs
+---@param repo I.Repo
+---@param on_done? fun(graph: I.Row[])
+function M.draw(config, options, args, repo, on_done)
+  options = options or {}
+  show_buffer(options)
+  M.render(config, options, args, repo, vim.api.nvim_get_current_win(), on_done)
 end
 
 return M
