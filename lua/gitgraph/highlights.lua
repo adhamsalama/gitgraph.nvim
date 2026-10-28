@@ -58,6 +58,9 @@ function M.set_highlights()
   for _, hg in ipairs(M.REF_HGS) do
     set_hl(hg.name, { fg = hg.fg, bg = hg.bg, bold = hg.bold })
   end
+
+  -- commits outside the branch focus (focus.lua)
+  set_hl('GitGraphDimmed', { link = 'Comment' })
 end
 
 return M

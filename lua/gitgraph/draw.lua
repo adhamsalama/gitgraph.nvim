@@ -7,9 +7,11 @@ local guard = require('gitgraph.guard')
 ---@class I.DrawState
 ---@field buf integer?
 ---@field graph I.Row[]
+---@field highlights I.Highlight[] -- of the last render, re-applied when the focus changes
 local M = {
   buf = nil,
   graph = {},
+  highlights = {},
 }
 
 M.ns = vim.api.nvim_create_namespace('gitgraph')
@@ -132,22 +134,40 @@ local function cursor_anchors(buf)
   return anchors
 end
 
+--- (Re)applies the last render's highlights; rows outside the branch focus (see focus.lua) are dimmed
+--- instead.
+function M.apply_highlights()
+  local buf = M.buf
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  local dimmed = require('gitgraph.focus').dimmed_rows(M.graph) or {}
+
+  vim.api.nvim_buf_clear_namespace(buf, M.ns, 0, -1)
+  for _, hl in ipairs(M.highlights) do
+    if not dimmed[hl.row] then
+      vim.api.nvim_buf_set_extmark(buf, M.ns, hl.row - 1, hl.start, {
+        end_col = hl.stop + 1,
+        hl_group = hl.hg,
+        strict = false,
+      })
+    end
+  end
+  local line_count = vim.api.nvim_buf_line_count(buf)
+  for row in pairs(dimmed) do
+    if row <= line_count then
+      vim.api.nvim_buf_set_extmark(buf, M.ns, row - 1, 0, { end_row = row, hl_group = 'GitGraphDimmed', strict = false })
+    end
+  end
+end
+
 ---@param buf integer
 ---@param lines string[]
----@param highlights I.Highlight[]
-local function write_buffer(buf, lines, highlights)
+local function write_buffer(buf, lines)
   vim.api.nvim_set_option_value('modifiable', true, { buf = buf })
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.api.nvim_set_option_value('modifiable', false, { buf = buf })
-
-  vim.api.nvim_buf_clear_namespace(buf, M.ns, 0, -1)
-  for _, hl in ipairs(highlights) do
-    vim.api.nvim_buf_set_extmark(buf, M.ns, hl.row - 1, hl.start, {
-      end_col = hl.stop + 1,
-      hl_group = hl.hg,
-      strict = false,
-    })
-  end
+  M.apply_highlights()
 end
 
 --- Fetches commits for `args` and renders them into the GitGraph buffer.
@@ -195,8 +215,9 @@ function M.render(config, options, args, repo, win, on_done, on_error)
     local start = vim.uv.hrtime()
     local graph, lines, highlights, head_loc = core.gitgraph(config, options, data)
     M.graph = graph
+    M.highlights = highlights
 
-    write_buffer(buf, lines, highlights)
+    write_buffer(buf, lines)
 
     if options.preserve_cursor then
       for _, anchor in ipairs(anchors) do

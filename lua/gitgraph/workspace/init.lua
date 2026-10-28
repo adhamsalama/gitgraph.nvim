@@ -295,6 +295,7 @@ local function graph_help()
     { '<leader>gVb', 'Select branch to show' },
     { '<leader>gVs', 'Search panel' },
     { '<leader>gVc', 'Set max commit count' },
+    { '<leader>gVf', 'Toggle branch focus' },
   }
   for _, key in ipairs(workspace_keys()) do
     entries[#entries + 1] = { key[1], key.desc }

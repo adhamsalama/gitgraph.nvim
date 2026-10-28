@@ -566,6 +566,10 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
     require('gitgraph').select_and_draw_max_count()
   end, { buffer = buf_id, desc = "Set max commit count interactively" })
 
+  vim.keymap.set('n', '<leader>gVf', function()
+    require('gitgraph.focus').toggle()
+  end, { buffer = buf_id, desc = "Toggle branch focus (dim commits not reachable from this one)" })
+
   vim.keymap.set('v', '<CR>', function()
     -- make sure visual selection is done
     vim.cmd('noau normal! "vy"')

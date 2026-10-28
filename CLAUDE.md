@@ -50,6 +50,7 @@ it buries real changes in the diff.
 | `lua/gitgraph/core.lua` | Layout algorithm: raw commits → rows/lines/highlights. `core.gitgraph(config, options, data)` takes already-fetched commits. Two buffer lines per commit (commit row + message row); `utils.get_commit_from_row` maps a line to its commit. |
 | `lua/gitgraph/refs.lua` | `%D` parsing (`git log --decorate=full`) into typed `I.Ref`s, ref badges (`badges`: `HEAD → main`, `main ⇄ origin` when the remote branch is on the same commit, `origin/HEAD` hidden) and lane colours (`assign_lanes`: first-parent walks from tips, trunk branches first; `color_index` = djb2 of the branch name). |
 | `lua/gitgraph/utils.lua` | Buffer keymaps for the graph (`<CR>` commit actions, visual `<CR>` range actions, `<leader>gV*`), safety checks for destructive actions, `git_action` helper, `name_tab`. |
+| `lua/gitgraph/focus.lua` | Branch focus (`<leader>gVf` toggle): dims commits not reachable from the focused commit, from in-memory parents. Follows the commit's ref across redraws; dims nothing (but stays on) while its commit isn't in the graph or the repo differs. |
 | `lua/gitgraph/guard.lua` | Protects the plugin's windows: `own(buf)` marks plugin buffers, `protect(win)` makes a window hand any other buffer back out (diffview's `gf` `:edit`s in the previous tab, i.e. ours). The file moves to the tab the plugin was opened from (`guard.tabnew` records it), else another non-plugin, non-diffview tab, else a new tab, keeping the cursor. |
 | `lua/gitgraph/watch.lua` | fs-event watcher on git_dir, `logs/` and `refs/` (recursive; Linux only sees top-level). `subscribe(name, fn, {index})`/`unsubscribe`; debounced per subscriber. Graph subscribes as `graph` (ignores index changes), workspace as `workspace` (includes index). |
 
@@ -64,6 +65,8 @@ Key behaviours:
   `commit.branch_names`/`tags` keep the old short strings (`HEAD -> main`, `tag: v1`).
 - Lane colours come from the commit's branch, not its column. A line cell's `commit` is the commit it leads
   *to*, so `core` tracks the last commit drawn per column: a first-parent edge takes the child's colour.
+- `draw.highlights` keeps the last render's highlights; `draw.apply_highlights()` re-applies them with focus
+  dimming (dimmed rows get only `GitGraphDimmed`), so toggling focus doesn't re-run git.
 - Highlights are extmarks in `draw.ns`. Commit hashes in the graph are abbreviated (`%h`, may be >7
   chars); compare with full hashes via `vim.startswith(full, short)`.
 
