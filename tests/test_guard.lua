@@ -76,7 +76,7 @@ H.run(function()
   wait(2000, function()
     return #ws.status.lines > 3 and #gg.graph > 0
   end)
-  for _, name in ipairs({ 'status', 'branches', 'graph' }) do
+  for _, name in ipairs({ 'status', 'branches', 'stash', 'graph' }) do
     local win = ws.wins[name]
     local own = vim.api.nvim_win_get_buf(win)
     vim.api.nvim_set_current_tabpage(ws.tab)
@@ -88,7 +88,7 @@ H.run(function()
     check(name .. ' window gets its buffer back', back and vim.api.nvim_buf_is_valid(own))
     check(name .. ': file opened in the origin tab', vim.api.nvim_get_current_tabpage() == ws_origin and buf_name(0) == notes)
   end
-  check('workspace still has 3 windows', #vim.api.nvim_tabpage_list_wins(ws.tab) == 3)
+  check('workspace still has 4 windows', #vim.api.nvim_tabpage_list_wins(ws.tab) == 4)
 
   -- the status panel still works after being displaced
   H.git(S .. '/ws', 'add', 'untracked.txt')
@@ -101,7 +101,7 @@ H.run(function()
   check('status panel still refreshes', staged)
 
   -- closing the workspace deletes the panel buffers (they're bufhidden=hide now)
-  local bufs = { ws.status.buf, ws.branches.buf }
+  local bufs = { ws.status.buf, ws.branches.buf, ws.stash.buf }
   ws_mod.close()
   check('panel buffers deleted on close', not vim.iter(bufs):any(function(b)
     return vim.api.nvim_buf_is_valid(b)

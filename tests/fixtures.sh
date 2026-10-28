@@ -61,5 +61,12 @@ setup_fixtures() {
     git branch -q --set-upstream-to=origin/main
     echo 5 > x && git add x && git commit -qm c5
     echo 6 > x && git commit -qam c6
+    cd ..
+
+    # st: two stashes ("first" older, "second" newest) and a clean tree
+    mkdir st && cd st && git init -q -b main
+    echo a > a && git add a && git commit -qm init
+    echo one > a && git stash push -q -m first
+    echo two > a && git stash push -q -m second
   )
 }

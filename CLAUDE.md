@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A Neovim plugin that started as an ASCII git graph (`:GitGraph…`, `require('gitgraph').draw()`) and is
-growing into a **lazygit-style git UI native to Neovim**: `:GitGraphWorkspace` opens a tab with status
-and branches panels and the graph (no preview pane: the user had it removed). diffview.nvim is used for full diffs, file history and
+growing into a **lazygit-style git UI native to Neovim**: `:GitGraphWorkspace` opens a tab with status,
+branches and stash panels and the graph (no preview pane: the user had it removed). diffview.nvim is used for full diffs, file history and
 merge conflicts (optional; features degrade without it). Requires Neovim 0.10+ (`vim.system`, `vim.fs.root`,
 `vim.iter`).
 
@@ -75,10 +75,11 @@ Key behaviours:
 
 | Module | Role |
 |---|---|
-| `init.lua` | Opens/closes the tab (named via `vim.t.name`, config `tab_name`), layout (Status and Branches on the left, graph on the right), workspace-wide keys, autocmds, `show_in_graph(args)`, graph winbar, `follow_branch`. |
+| `init.lua` | Opens/closes the tab (named via `vim.t.name`, config `tab_name`), layout (Status, Branches and Stash on the left, graph on the right), workspace-wide keys, autocmds, `show_in_graph(args)`, graph winbar, `follow_branch`. |
 | `panel.lua` | Base `Panel`: read-only buffer of `I.PanelLine`s (text, highlight marks, item per line), keymaps from `{lhs, fn(panel), desc, mode?}`, `item()`, `selected_items()`, `?` help float (`panel.help`). |
 | `status.lua` | `git status --porcelain=v1 -z --branch` parsing and rendering (Conflicts/Changes/Untracked/Staged), stage/unstage/discard. Uses `--no-optional-locks` so its own refreshes don't rewrite the index (which would retrigger the watcher). |
 | `branches.lua` | `for-each-ref` parsing, Local/Remotes/Tags tabs, filter, checkout/create/delete/rename/upstream/rebase/merge. `select_next` keeps the cursor on a renamed or new branch. |
+| `stash.lua` | `git stash list` panel: `s` stash (all incl. untracked / tracked / staged, optional message), `a` apply, `g` pop, `d` drop (confirms), `<CR>` `DiffviewOpen <stash>^..<stash>`. Avoids `<Space>` (the user's leader). Checks `stash@{n}` still points at the listed commit before acting. |
 | `commit.lua` | Floating `gitcommit` buffer (`acwrite`); `:w` runs `git commit --cleanup=strip -F -` with the message on stdin (and `-c core.commentChar=#`). Reopens with the message if the commit fails after `:wq`. |
 | `jobs.lua` | Long-running commands (fetch/pull/push/rebase/merge/remote delete): background, `detach = true` and `GIT_TERMINAL_PROMPT=0` so credential prompts fail instead of hanging on Neovim's tty, `GIT_EDITOR=true`. Push offers set-upstream and force-with-lease after a rejection. |
 
@@ -88,7 +89,7 @@ Design decisions worth keeping:
   don't add workspace keys to `utils.apply_buffer_mappings`.
 - **Panel keys take precedence over workspace keys** with the same lhs (e.g. `R` renames in Branches but
   refreshes elsewhere). Number keys aren't used for panel switching because they're counts in Vim;
-  `<Tab>`/`<S-Tab>` cycle Status → Branches → Graph.
+  `<Tab>`/`<S-Tab>` cycle Status → Branches → Stash → Graph.
 - **The graph follows the branch under the cursor** in the Branches panel (150ms debounce). `show_in_graph`
   draws through `nvim_win_call` so BufEnter doesn't fire and focus stays in the panel.
 - Status refreshes on watcher events, BufWritePost of files in the repo, FocusGained, BufEnter and TabEnter.
@@ -107,7 +108,6 @@ are coloured pills; branch focus is a toggle (`<leader>gVf`), not automatic; com
 `<CR>` menu (no direct keys). Open idea: ahead/behind counts on a local badge (`main ↑2 ↓1`).
 
 **Step 5**
-- Stash panel (stash, pop, apply, drop; no preview pane, so show a stash's diff via diffview).
 - Rebase/merge-in-progress banner with continue/abort/skip.
 - Undo through the reflog (commits/resets only; never discarded working-tree changes).
 - Polish: graph `K` hover with full message and `--stat`, `]r`/`[r` to jump between refs, infinite scroll via
