@@ -336,6 +336,12 @@ if vim and vim.api and vim.api.nvim_create_user_command then
 end
 
 if vim and vim.api and vim.api.nvim_create_user_command then
+  vim.api.nvim_create_user_command("GitGraphWorkspace", function()
+    require('gitgraph.workspace').open()
+  end, { desc = "GitGraph: Open the git workspace (status, graph, preview)" })
+end
+
+if vim and vim.api and vim.api.nvim_create_user_command then
   vim.api.nvim_create_user_command("GitGraphMaxCount", function()
     require('gitgraph').select_and_draw_max_count()
   end, { desc = "Set max commit count interactively" })
