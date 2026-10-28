@@ -64,6 +64,7 @@ end
 ---@return boolean -- true if contained bi-crossing
 function M._gitgraph(raw_commits, opt, sym, fields)
   local ITEM_HGS = require('gitgraph.highlights').ITEM_HGS
+  local refs = require('gitgraph.refs')
   local BRANCH_HGS = require('gitgraph.highlights').BRANCH_HGS
 
   local NUM_BRANCH_COLORS = #BRANCH_HGS
@@ -136,6 +137,8 @@ function M._gitgraph(raw_commits, opt, sym, fields)
   ---@field msg string
   ---@field branch_names string[]
   ---@field tags string[]
+  ---@field refs I.Ref[]
+  ---@field lane string? -- branch whose colour this commit's lane gets, see refs.assign_lanes
   ---@field debug string?
   ---@field author_date string
   ---@field author_name string
@@ -152,6 +155,7 @@ function M._gitgraph(raw_commits, opt, sym, fields)
       msg = rc.msg,
       branch_names = rc.branch_names,
       tags = rc.tags,
+      refs = rc.refs or {},
       author_date = rc.author_date,
       author_name = rc.author_name,
       hash = rc.hash,
@@ -185,6 +189,7 @@ function M._gitgraph(raw_commits, opt, sym, fields)
             children = { c.hash },
             branch_names = {},
             tags = {},
+            refs = {},
             i = -1,
             j = -1,
           }
@@ -195,6 +200,8 @@ function M._gitgraph(raw_commits, opt, sym, fields)
     local dur = os.clock() - start
     log.info('children dur:', dur * 1000, 'ms')
   end
+
+  refs.assign_lanes(commits, sorted_commits)
 
   ---@param cells I.Cell[]
   ---@return I.Cell[]
@@ -511,6 +518,34 @@ function M._gitgraph(raw_commits, opt, sym, fields)
       return table.concat(row_strs)
     end
 
+    --- Lane colour: picked by the branch the commit belongs to, so it stays the same whichever
+    --- column the branch is drawn in. Falls back to the column.
+    ---@param commit I.Commit
+    ---@param j integer
+    ---@return string
+    local function lane_hg(commit, j)
+      local index = commit.lane and refs.color_index(commit.lane, NUM_BRANCH_COLORS) or (j % NUM_BRANCH_COLORS + 1)
+      return BRANCH_HGS[index].name
+    end
+
+    -- last commit drawn in each column: the edge running down from it is coloured by its lane
+    ---@type table<integer, I.Commit>
+    local column_source = {}
+
+    --- A line cell belongs to the commit it leads to (its `commit`). A first-parent edge takes the
+    --- child's colour, so a branch keeps its colour down to the commit it forked from; other edges
+    --- (merges) take the parent's.
+    ---@param cell I.Cell
+    ---@param j integer
+    ---@return string
+    local function cell_hg(cell, j)
+      local from = column_source[j]
+      if not cell.is_commit and from and from.parents[1] == cell.commit.hash then
+        return lane_hg(from, j)
+      end
+      return lane_hg(cell.commit, j)
+    end
+
     ---@param row I.Row
     ---@param row_idx integer
     ---@return I.Highlight[]
@@ -527,7 +562,7 @@ function M._gitgraph(raw_commits, opt, sym, fields)
         offset = offset + width
 
         if cell.commit then
-          local hg = 'GitGraphBranch' .. tostring(j % NUM_BRANCH_COLORS + 1)
+          local hg = cell_hg(cell, j)
           row_hls[#row_hls + 1] = { hg = hg, row = row_idx, start = start, stop = stop }
         elseif cell.symbol == GHOR then
           -- take color from first right cell that attaches to this connector
@@ -551,7 +586,7 @@ function M._gitgraph(raw_commits, opt, sym, fields)
             }
 
             if rcell.commit and vim.tbl_contains(continuations, rcell.symbol) then
-              local hg = 'GitGraphBranch' .. tostring(k % NUM_BRANCH_COLORS + 1)
+              local hg = cell_hg(rcell, k)
               row_hls[#row_hls + 1] = { hg = hg, row = row_idx, start = start, stop = stop }
               break
             end
@@ -676,7 +711,19 @@ function M._gitgraph(raw_commits, opt, sym, fields)
           --- add hihlights for hash, timestamp, branch_names and tags
           for _, name in ipairs(fields) do
             local value = items[name]
-            if value then
+            if (name == 'branch_name' or name == 'tag') and #c.refs > 0 then
+              -- one badge per ref (or local+remote pair), each padded so its background reads as a pill
+              for _, badge in ipairs(refs.badges(c.refs, { branch = name == 'branch_name', tag = name == 'tag' })) do
+                local text = ' ' .. badge.text .. ' '
+                highlights[#highlights + 1] = {
+                  hg = badge.hg,
+                  row = idx,
+                  start = offset,
+                  stop = offset + #text - 1,
+                }
+                add_to_row(text)
+              end
+            elseif value then
               highlights[#highlights + 1] = {
                 hg = ITEM_HGS[name].name,
                 row = idx,
@@ -726,6 +773,11 @@ function M._gitgraph(raw_commits, opt, sym, fields)
 
         for _, hl in ipairs(row_to_highlights(proper_row, idx)) do
           highlights[#highlights + 1] = hl
+        end
+        for j, cell in ipairs(proper_row.cells) do
+          if cell.is_commit then
+            column_source[j] = cell.commit
+          end
         end
       end
 

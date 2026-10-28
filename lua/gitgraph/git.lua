@@ -8,6 +8,7 @@ local M = {}
 ---@field msg string
 ---@field branch_names string[]
 ---@field tags string[]
+---@field refs I.Ref[]
 ---@field author_date string
 ---@field author_name string
 
@@ -138,6 +139,8 @@ function M.log_args(args, date_format)
     '--pretty=format:%s%x00(%D)%x00%ad%x00%an%x00%h%x00%p',
     '--date=format:' .. date_format,
     '--date-order',
+    -- full ref names tell local branches, remote branches and tags apart (see refs.parse)
+    '--decorate=full',
   }
 
   -- you cannot use both all and range at the same time
@@ -215,16 +218,8 @@ function M.parse_log(stdout)
 
     -- Only add commit if all required fields are present
     if msg and describers and author_date and author_name and hash and hash ~= '' then
-      local branch_names = {}
-      local tags = {}
-      describers = describers:gsub('^%(', ''):gsub('%)$', '') -- tags, branch names etc
-      for desc in describers:gsub(', ', '\0'):gmatch('[^%z]+') do
-        if desc:match('tag:.+') then
-          tags[#tags + 1] = desc
-        else
-          branch_names[#branch_names + 1] = desc
-        end
-      end
+      -- tags, branch names etc
+      local refs, branch_names, tags = require('gitgraph.refs').parse((describers:gsub('^%(', ''):gsub('%)$', '')))
 
       local parents = {}
       for p in (parent_str or ''):gmatch('[^%s]+') do
@@ -235,6 +230,7 @@ function M.parse_log(stdout)
         msg = msg,
         branch_names = branch_names,
         tags = tags,
+        refs = refs,
         author_date = author_date,
         author_name = author_name,
         hash = hash,

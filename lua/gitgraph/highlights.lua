@@ -3,6 +3,8 @@ local M = {}
 ---@class I.HighlightGroup
 ---@field name string
 ---@field fg string
+---@field bg? string
+---@field bold? boolean
 
 ---@type table<string, I.HighlightGroup>
 M.ITEM_HGS = {
@@ -21,6 +23,19 @@ M.BRANCH_HGS = {
   { name = 'GitGraphBranch3', fg = '#d79921' },
   { name = 'GitGraphBranch4', fg = '#98971a' },
   { name = 'GitGraphBranch5', fg = '#d5651c' },
+  { name = 'GitGraphBranch6', fg = '#689d6a' },
+  { name = 'GitGraphBranch7', fg = '#cc241d' },
+  { name = 'GitGraphBranch8', fg = '#83a598' },
+}
+
+--- Ref badges (see refs.badges): dark text on a coloured background, readable on light and dark themes.
+---@type I.HighlightGroup[]
+M.REF_HGS = {
+  { name = 'GitGraphRefHead', fg = '#282828', bg = '#fabd2f', bold = true },
+  { name = 'GitGraphRefLocal', fg = '#282828', bg = '#8ec07c' },
+  { name = 'GitGraphRefRemote', fg = '#282828', bg = '#83a598' },
+  { name = 'GitGraphRefTag', fg = '#282828', bg = '#d3869b' },
+  { name = 'GitGraphRefOther', fg = '#282828', bg = '#a89984' },
 }
 
 --- sets highlight groups if they are missing
@@ -38,6 +53,10 @@ function M.set_highlights()
 
   for _, hg in pairs(M.ITEM_HGS) do
     set_hl(hg.name, { fg = hg.fg })
+  end
+
+  for _, hg in ipairs(M.REF_HGS) do
+    set_hl(hg.name, { fg = hg.fg, bg = hg.bg, bold = hg.bold })
   end
 end
 

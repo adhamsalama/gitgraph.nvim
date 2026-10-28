@@ -48,6 +48,7 @@ it buries real changes in the diff.
 | `lua/gitgraph/git.lua` | **All git calls go through here**: `run` (sync), `run_async`, `lines`, `find_repo`, `log_args`, `parse_log`, `git_log_pretty`. Argument lists only, never shell strings. Adds `--no-pager -c color.ui=false`. |
 | `lua/gitgraph/draw.lua` | `draw` = `show_buffer` (window/tab management, sync) + `render` (async fetch → `core.gitgraph` → buffer). A generation counter drops stale results. Fires `User GitGraphRendered` after each render. |
 | `lua/gitgraph/core.lua` | Layout algorithm: raw commits → rows/lines/highlights. `core.gitgraph(config, options, data)` takes already-fetched commits. Two buffer lines per commit (commit row + message row); `utils.get_commit_from_row` maps a line to its commit. |
+| `lua/gitgraph/refs.lua` | `%D` parsing (`git log --decorate=full`) into typed `I.Ref`s, ref badges (`badges`: `HEAD → main`, `main ⇄ origin` when the remote branch is on the same commit, `origin/HEAD` hidden) and lane colours (`assign_lanes`: first-parent walks from tips, trunk branches first; `color_index` = djb2 of the branch name). |
 | `lua/gitgraph/utils.lua` | Buffer keymaps for the graph (`<CR>` commit actions, visual `<CR>` range actions, `<leader>gV*`), safety checks for destructive actions, `git_action` helper, `name_tab`. |
 | `lua/gitgraph/watch.lua` | fs-event watcher on git_dir, `logs/` and `refs/` (recursive; Linux only sees top-level). `subscribe(name, fn, {index})`/`unsubscribe`; debounced per subscriber. Graph subscribes as `graph` (ignores index changes), workspace as `workspace` (includes index). |
 
@@ -58,6 +59,10 @@ Key behaviours:
 - **Auto-refresh**: watcher → `gitgraph.refresh()` re-runs `last_args` with `preserve_cursor` (cursor stays on
   the same commit). Deferred via `_dirty` while the graph is hidden or the user is in visual mode.
   If a shown ref disappeared, refresh falls back to local branches with one warning.
+- Ref badges are real buffer text (so `/` search works) with `GitGraphRef{Head,Local,Remote,Tag,Other}` extmarks.
+  `commit.branch_names`/`tags` keep the old short strings (`HEAD -> main`, `tag: v1`).
+- Lane colours come from the commit's branch, not its column. A line cell's `commit` is the commit it leads
+  *to*, so `core` tracks the last commit drawn per column: a first-parent edge takes the child's colour.
 - Highlights are extmarks in `draw.ns`. Commit hashes in the graph are abbreviated (`%h`, may be >7
   chars); compare with full hashes via `vim.startswith(full, short)`.
 
