@@ -91,10 +91,8 @@ Done: (1) async plumbing and auto-refresh, (2) workspace, status panel and commi
 panel and fetch/pull/push.
 
 **Step 4: graph upgrades**
-- One line per commit: hash and message inline, author/date right-aligned as virtual text. Update
-  `utils.get_commit_from_row` and every place that assumes 2 rows per commit (`draw.find_commit_row`,
-  `cursor_anchors`, the visual-range logic in `utils.lua`, and the user's `]c`/`[c` mappings in
-  `~/.config/nvim/lua/plugins/gitgraph.lua`, which jump 2 lines).
+- Keep the two-lines-per-commit layout (commit row + message row). The user prefers it, so don't switch
+  to one line per commit.
 - Ref badges via extmarks (local / remote / tag / HEAD in distinct highlights; collapse `main` +
   `origin/main` on the same commit into one badge). Today refs are one `(…)` text blob from `%D`.
 - Stable lane colours per branch (hash of the name).
