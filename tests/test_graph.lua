@@ -93,6 +93,30 @@ H.run(function()
   local row = vim.api.nvim_win_get_cursor(0)[1]
   check('cursor preserved on same commit', require('gitgraph.utils').get_commit_from_row(gg.graph, row).hash == before_hash and row ~= target)
 
+  -- a branch whose history contains HEAD further down opens at its newest commit, not at HEAD
+  local R = S .. '/repo'
+  local tip = vim.trim(H.git(R, 'rev-parse', 'HEAD'))
+  local tree = vim.trim(H.git(R, 'rev-parse', 'HEAD^{tree}'))
+  for i = 1, 30 do
+    tip = vim.trim(H.git(R, 'commit-tree', tree, '-p', tip, '-m', 'ahead ' .. i))
+  end
+  H.git(R, 'update-ref', 'refs/heads/ahead', tip)
+  vim.api.nvim_win_set_cursor(0, { 5, 0 })
+  gg.draw({}, { revision_range = 'ahead' })
+  wait(2000, function()
+    return gg.last_args.revision_range == 'ahead' and gg.graph[1] and gg.graph[1].commit.msg == 'ahead 30'
+  end)
+  wait(100)
+  check('chosen branch opens at its newest commit', vim.api.nvim_win_get_cursor(0)[1] == 1 and vim.fn.line('w0') == 1, vim.api.nvim_win_get_cursor(0)[1])
+  -- the default view still opens on HEAD
+  gg.draw({}, {})
+  wait(2000, function()
+    return gg.last_args.revision_range == nil and #gg.graph > 0
+  end)
+  wait(100)
+  local cur = vim.api.nvim_get_current_line()
+  check('default view still opens on HEAD', cur:find('HEAD →', 1, true) ~= nil, cur)
+
   -- bad revision -> error, no crash
   local errs = {}
   local orig = vim.notify

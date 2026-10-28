@@ -227,7 +227,10 @@ function M.render(config, options, args, repo, win, on_done, on_error)
         end
       end
     elseif win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
-      vim.api.nvim_win_set_cursor(win, { math.min(head_loc or 1, math.max(#lines, 1)), 0 })
+      -- a chosen branch/range opens at its newest commit (HEAD may be far down its history); the
+      -- default views open on HEAD
+      local row = args.revision_range and 1 or head_loc or 1
+      vim.api.nvim_win_set_cursor(win, { math.min(row, math.max(#lines, 1)), 0 })
     end
 
     utils.apply_buffer_mappings(buf, graph, config.hooks)
