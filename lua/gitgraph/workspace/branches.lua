@@ -400,6 +400,81 @@ function BranchesPanel:integrate(ref, op)
   end)
 end
 
+--- lazygit's "create pull request" (`O`): pick the target branch, then open the GitHub pull request
+--- or GitLab merge request page for `ref` in the browser.
+---@param ref I.Ref
+function BranchesPanel:open_pr(ref)
+  if ref.kind == 'tag' then
+    vim.notify('Pull requests are opened from branches, not tags', vim.log.levels.WARN)
+    return
+  end
+  local remotes = git.lines(self.repo.root, { 'remote' }) or {}
+  ---@param name string `origin/feature`
+  ---@return string? remote, string? branch
+  local function split(name)
+    for _, remote in ipairs(remotes) do
+      if vim.startswith(name, remote .. '/') then
+        return remote, name:sub(#remote + 2)
+      end
+    end
+  end
+
+  local remote, head
+  if ref.kind == 'remote' then
+    remote, head = split(ref.name)
+  elseif ref.upstream ~= '' and not ref.gone then
+    remote, head = split(ref.upstream)
+  end
+  if not remote then
+    -- not tracking anything: a branch of the same name on a remote still works
+    for _, r in ipairs(self.refs) do
+      local rr, rb = split(r.name)
+      if r.kind == 'remote' and rb == ref.name then
+        remote, head = rr, rb
+        break
+      end
+    end
+  end
+  if not remote or not head then
+    vim.notify(("%s isn't on a remote yet; push it first (P)"):format(ref.name), vim.log.levels.WARN)
+    return
+  end
+
+  -- the remote's default branch first, then its other branches (newest first)
+  local default = (git.lines(self.repo.root, { 'symbolic-ref', '--short', '-q', 'refs/remotes/' .. remote .. '/HEAD' }) or {})[1]
+  default = default and select(2, split(default))
+  local targets = default and default ~= head and { default } or {}
+  for _, r in ipairs(self.refs) do
+    local rr, rb = split(r.name)
+    if r.kind == 'remote' and rr == remote and rb ~= head and rb ~= default then
+      targets[#targets + 1] = rb
+    end
+  end
+  if #targets == 0 then
+    vim.notify(('No other branches on %s to open a pull request against'):format(remote), vim.log.levels.WARN)
+    return
+  end
+
+  local url_of_remote = (git.lines(self.repo.root, { 'remote', 'get-url', remote }) or {})[1] or ''
+  vim.ui.select(targets, { prompt = ('Pull request from %s into:'):format(head) }, function(base)
+    if not base then
+      return
+    end
+    local hosts = require('gitgraph').config.git_hosts or {}
+    local url, err = require('gitgraph.hosting').pr_url(url_of_remote, head, base, hosts)
+    if not url then
+      vim.notify('GitGraph: ' .. err, vim.log.levels.ERROR)
+      return
+    end
+    local _, open_err = vim.ui.open(url)
+    if open_err then
+      vim.notify(('Could not open the browser (%s). URL: %s'):format(open_err, url), vim.log.levels.ERROR)
+    else
+      vim.notify(('Opening pull request %s → %s'):format(head, base), vim.log.levels.INFO)
+    end
+  end)
+end
+
 ---@param repo I.Repo
 ---@param extra_keys I.PanelKey[] -- workspace-wide keys; panel keys take precedence
 ---@param on_change fun()
@@ -451,6 +526,7 @@ function M.new(repo, extra_keys, on_change, show_in_graph)
     { 'd', on_ref(BranchesPanel.delete), desc = 'Delete' },
     { 'R', on_ref(BranchesPanel.rename), desc = 'Rename' },
     { 'u', on_ref(BranchesPanel.set_upstream), desc = 'Set upstream' },
+    { 'O', on_ref(BranchesPanel.open_pr), desc = 'Open a pull/merge request (choose the target branch)' },
     {
       'r',
       on_ref(function(panel, ref)
