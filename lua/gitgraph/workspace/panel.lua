@@ -19,6 +19,7 @@ local ns = vim.api.nvim_create_namespace('gitgraph_panel')
 ---@field [2] fun(panel: I.Panel) -- action
 ---@field desc string
 ---@field mode? string|string[]
+---@field nowait? boolean -- false: let longer global mappings sharing this prefix (e.g. `]t`) still work
 
 ---@class I.Panel
 ---@field buf integer
@@ -97,7 +98,7 @@ function M.new(spec)
   for _, key in ipairs(spec.keys) do
     vim.keymap.set(key.mode or 'n', key[1], function()
       key[2](self)
-    end, { buffer = buf, nowait = true, desc = key.desc })
+    end, { buffer = buf, nowait = key.nowait ~= false, desc = key.desc })
   end
   vim.keymap.set('n', '?', function()
     self:help()

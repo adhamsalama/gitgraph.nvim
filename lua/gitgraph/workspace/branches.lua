@@ -877,6 +877,7 @@ function M.new(repo, extra_keys, on_change, show_in_graph, switch_worktree)
         panel:switch_tab(1)
       end,
       desc = 'Next tab (Local, Remotes, Tags, Worktrees)',
+      nowait = false,
     },
     {
       '[',
@@ -884,6 +885,7 @@ function M.new(repo, extra_keys, on_change, show_in_graph, switch_worktree)
         panel:switch_tab(-1)
       end,
       desc = 'Previous tab',
+      nowait = false,
     },
     {
       '/',
