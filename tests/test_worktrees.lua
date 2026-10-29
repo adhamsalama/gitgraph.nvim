@@ -146,7 +146,16 @@ H.run(function()
   check("main worktree can't be removed", noted("main worktree can't be removed"))
 
   -- n: a new branch in a new worktree, next to the main one
-  answers = { '+ New branch', 'feat/y', true }
+  local bases
+  answers = {
+    '+ New branch',
+    function(items)
+      bases = items
+      return 'main'
+    end,
+    'feat/y',
+    true,
+  }
   press('n')
   wait(3000, function()
     return on(W .. '/normal-feat-y')
@@ -155,6 +164,13 @@ H.run(function()
     'default path is next to the main worktree',
     vim.tbl_contains(prompts, 'Worktree path: ' .. vim.fn.fnamemodify(real(W) .. '/normal-feat-y', ':~')),
     prompts[#prompts]
+  )
+  check('base choices: current branch first', bases and bases[1] == 'side' and vim.tbl_contains(bases, 'main'), vim.inspect(bases))
+  check('asked for the name with the base', vim.tbl_contains(prompts, 'New branch from main: '), vim.inspect(prompts))
+  check(
+    'started from the chosen branch',
+    H.git(W .. '/normal', 'rev-parse', 'side') ~= H.git(W .. '/normal', 'rev-parse', 'main')
+      and H.git(W .. '/normal', 'rev-parse', 'feat/y') == H.git(W .. '/normal', 'rev-parse', 'main')
   )
   check('new worktree created and switched to', on(W .. '/normal-feat-y') and H.git(W .. '/normal-feat-y', 'branch', '--show-current') == 'feat/y\n')
 

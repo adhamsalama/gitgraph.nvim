@@ -549,15 +549,37 @@ function BranchesPanel:new_worktree()
   end
   vim.ui.select(choices, { prompt = 'Branch for the new worktree:' }, function(choice)
     if choice == NEW then
-      local base = (git.lines(self.repo.root, { 'symbolic-ref', '--short', '-q', 'HEAD' }) or {})[1] or 'HEAD'
-      vim.ui.input({ prompt = ('New branch (from %s): '):format(base) }, function(name)
-        if name and vim.trim(name) ~= '' then
-          self:add_worktree(vim.trim(name), { '-b', vim.trim(name) })
-        end
-      end)
+      self:new_branch_worktree()
     elseif choice and by_choice[choice] then
       self:worktree_from(by_choice[choice])
     end
+  end)
+end
+
+--- `+ New branch`: pick the branch to start from (the current one first), name the new branch, then
+--- its worktree path.
+function BranchesPanel:new_branch_worktree()
+  -- the current branch; in a bare repo, the default branch
+  local current = (git.lines(self.repo.root, { 'symbolic-ref', '--short', '-q', 'HEAD' }) or {})[1]
+  local bases = { current }
+  for _, kind in ipairs({ 'local', 'remote' }) do
+    for _, ref in ipairs(self.refs) do
+      if ref.kind == kind and ref.name ~= current then
+        bases[#bases + 1] = ref.name
+      end
+    end
+  end
+  vim.ui.select(bases, { prompt = 'Start the new branch from:' }, function(base)
+    if not base then
+      return
+    end
+    vim.ui.input({ prompt = ('New branch from %s: '):format(base) }, function(name)
+      name = name and vim.trim(name) or ''
+      if name ~= '' then
+        -- from a remote branch: don't track it, so push offers origin/<name> rather than pushing to it
+        self:add_worktree(name, { '--no-track', '-b', name }, base)
+      end
+    end)
   end)
 end
 

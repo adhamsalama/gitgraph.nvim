@@ -75,7 +75,7 @@ setup_fixtures() {
     git worktree add -q main
     cd ..
     mkdir normal && cd normal && git init -q -b main
-    echo 1 > f && git add f && git commit -qm c1 && git branch side
+    echo 1 > f && git add f && git commit -qm c1 && git branch side && git commit -q --allow-empty -m c2
     git worktree add -q ../normal-side side
   )
 }
