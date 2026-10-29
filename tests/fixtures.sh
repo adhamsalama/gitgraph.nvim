@@ -61,5 +61,21 @@ setup_fixtures() {
     git branch -q --set-upstream-to=origin/main
     echo 5 > x && git add x && git commit -qm c5
     echo 6 > x && git commit -qam c6
+    cd ..
+
+    # wt: worktrees. proj is a bare clone in the `proj/.bare` + `.git` file layout with a `main`
+    # worktree; normal is a regular repo with `side` checked out in ../normal-side.
+    mkdir wt && cd wt
+    git init -q --bare -b main origin.git
+    git clone -q origin.git seed 2>/dev/null && cd seed
+    echo 1 > f && git add f && git commit -qm c1 && git push -q origin main 2>/dev/null
+    git checkout -qb feature && git commit -q --allow-empty -m "feature 1" && git push -q origin feature 2>/dev/null
+    cd ..
+    mkdir proj && cd proj && git clone -q --bare ../origin.git .bare && echo 'gitdir: ./.bare' > .git
+    git worktree add -q main
+    cd ..
+    mkdir normal && cd normal && git init -q -b main
+    echo 1 > f && git add f && git commit -qm c1 && git branch side
+    git worktree add -q ../normal-side side
   )
 }

@@ -8,7 +8,7 @@ local DEBOUNCE_MS = 300
 
 ---@type uv.uv_fs_event_t[]
 local handles = {}
----@type string? -- common_dir of the repo being watched
+---@type string? -- git_dir of the repo being watched (worktrees of one repo share common_dir)
 local watching = nil
 
 ---@class I.WatchListener
@@ -57,11 +57,11 @@ end
 --- Starts watching `repo`, replacing any previously watched repo. Subscribers are kept.
 ---@param repo I.Repo
 function M.start(repo)
-  if watching == repo.common_dir and #handles > 0 then
+  if watching == repo.git_dir and #handles > 0 then
     return
   end
   stop_handles()
-  watching = repo.common_dir
+  watching = repo.git_dir
 
   -- HEAD and index live in git_dir and logs/HEAD changes on every commit, checkout, reset, merge and
   -- rebase step. refs/ catches branches created or moved without HEAD (fetch, `git branch`). Recursive

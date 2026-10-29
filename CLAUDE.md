@@ -54,12 +54,15 @@ it buries real changes in the diff.
 | `lua/gitgraph/rewrite.lua` | `<CR>` menu entries fixup/reword/drop/move up/move down. `plan` builds a `git rebase -i` todo (only for commits reachable from HEAD on a branch, with no merges in the rebase range); `run` copies it in via `GIT_SEQUENCE_EDITOR=cp <file>` (reword: `GIT_EDITOR=cp <msgfile>`, message from the commit editor float's `submit` hook) through `jobs.run`. Drop and rewriting commits already on `@{upstream}` confirm first; a conflict leaves the rebase stopped with a continue/abort hint. |
 | `lua/gitgraph/guard.lua` | Protects the plugin's windows: `own(buf)` marks plugin buffers, `protect(win)` makes a window hand any other buffer back out (diffview's `gf` `:edit`s in the previous tab, i.e. ours). The file moves to the tab the plugin was opened from (`guard.tabnew` records it), else another non-plugin, non-diffview tab, else a new tab, keeping the cursor. |
 | `lua/gitgraph/hosting.lua` | Remote URL parsing and pull/merge request URLs (GitHub `compare/base...head?expand=1`, GitLab `-/merge_requests/new?...`). Unknown domains need config `git_hosts = { [domain] = 'github'|'gitlab' }`. Used by `O` in the Branches panel (lazygit's "create pull request": pick the target branch, remote's default first, then `vim.ui.open`). |
+| `lua/gitgraph/worktrees.lua` | `git worktree list --porcelain` parsing (a bare repo's own entry is dropped), `base_dir`/`default_path` (bare: inside the bare repo's folder, `proj/` for the `proj/.bare` + `.git` file layout; otherwise `../<repo>-<branch>` next to the main worktree), `display` (short paths), `real` (realpath: macOS `/var` vs `/private/var`; compare worktree paths through it). |
 | `lua/gitgraph/watch.lua` | fs-event watcher on git_dir, `logs/` and `refs/` (recursive; Linux only sees top-level). `subscribe(name, fn, {index})`/`unsubscribe`; debounced per subscriber. Graph subscribes as `graph` (ignores index changes), workspace as `workspace` (includes index). |
 
 Key behaviours:
 - **Repo resolution** (`gitgraph._resolve_repo`): the graph's own repo when called from the graph/search
   buffer, else the current file's repo, else cwd. `draw` accepts `options.repo` to skip resolution.
-  Every git command (including destructive actions) runs in `repo.root`.
+  Every git command (including destructive actions) runs in `repo.root`. A bare repo (no worktree) resolves
+  to `repo.bare = true` with `root = git_dir = common_dir`; the graph works, working-tree actions fail with
+  git's error.
 - **Cursor after a draw**: a chosen branch/range (`args.revision_range`) opens at row 1 (its newest commit);
   the default views open on HEAD. Refreshes keep each window on the same commit.
 - **Auto-refresh**: watcher → `gitgraph.refresh()` re-runs `last_args` with `preserve_cursor` (cursor stays on
@@ -81,7 +84,7 @@ Key behaviours:
 | `init.lua` | Opens/closes the tab (named via `vim.t.name`, config `tab_name`), layout (Status and Branches on the left, graph on the right), workspace-wide keys, autocmds, `show_in_graph(args)`, graph winbar, `follow_branch`. |
 | `panel.lua` | Base `Panel`: read-only buffer of `I.PanelLine`s (text, highlight marks, item per line), keymaps from `{lhs, fn(panel), desc, mode?}`, `item()`, `selected_items()`, `?` help float (`panel.help`). |
 | `status.lua` | `git status --porcelain=v1 -z --branch` parsing and rendering (Conflicts/Changes/Untracked/Staged), stage/unstage/discard. Uses `--no-optional-locks` so its own refreshes don't rewrite the index (which would retrigger the watcher). |
-| `branches.lua` | `for-each-ref` parsing, Local/Remotes/Tags tabs, filter, checkout/create/delete/rename/upstream/rebase/merge. `select_next` keeps the cursor on a renamed or new branch. |
+| `branches.lua` | `for-each-ref` parsing, Local/Remotes/Tags/Worktrees tabs, filter, checkout/create/delete/rename/upstream/rebase/merge. `select_next` keeps the cursor on a renamed or new branch. Worktrees: `<Space>` switches, `n` (Worktrees tab) / `w` (on a branch) create one and switch to it, `d` removes (confirms again when dirty; never deletes the branch). A branch checked out in another worktree shows `⊕ <path>` (`%(worktreepath)`); `<Space>` on it offers that worktree, `d` refuses. |
 | `commit.lua` | Floating `gitcommit` buffer (`acwrite`); `:w` runs `git commit --cleanup=strip -F -` with the message on stdin (and `-c core.commentChar=#`). Reopens with the message if the commit fails after `:wq`. |
 | `jobs.lua` | Long-running commands (fetch/pull/push/rebase/merge/remote delete): background, `detach = true` and `GIT_TERMINAL_PROMPT=0` so credential prompts fail instead of hanging on Neovim's tty, `GIT_EDITOR=true`. Push offers set-upstream and force-with-lease after a rejection. |
 
@@ -99,6 +102,16 @@ Design decisions worth keeping:
   is not. Panel buffers are `bufhidden=hide` (so the guard can restore them) and are deleted in
   `teardown`.
 - Prompts use `vim.ui.select({ 'Yes', 'No' })` / `vim.ui.input`; destructive actions always confirm.
+- **Worktrees** (the user works with bare clones in the `proj/.bare` + `.git` file layout): the workspace
+  switches worktree in place (`M.switch_worktree(path?)` repoints `ws.repo` and both panels, restarts the
+  watcher, which is keyed on `git_dir`) and `:cd`s Neovim into it (global, not `:tcd`: the user wants to work
+  as if there were no worktrees; with no worktree: the bare repo's folder). Switching first closes every other
+  tab and every file buffer (`close_everything`; unsaved buffers: save and switch, or cancel). Opening from a file doesn't cd;
+  picking a worktree when opening from a bare folder does. Opened from a bare repo's folder it asks which worktree
+  (default branch first); with none it opens in no-worktree mode (Status says so, Branches starts on
+  Worktrees, `<Space>` on a branch creates a worktree). Removing the current worktree switches away first.
+  `offer_remote_branches`: a bare clone has no `remote.<r>.fetch`; offered once (a No is stored as
+  `gitgraph.skipRemoteBranches` in the repo config), Yes sets it, fetches and sets upstreams.
 
 ## Roadmap
 

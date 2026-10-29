@@ -16,6 +16,7 @@ local M = {}
 ---@field root string -- worktree top level, passed as `-C` to every git call
 ---@field git_dir string -- absolute path of this worktree's git dir (HEAD, logs/)
 ---@field common_dir string -- absolute path of the shared git dir (refs/, packed-refs)
+---@field bare? boolean -- a bare repo opened without a worktree: root is the git dir, there are no files
 
 ---@class I.GitResult
 ---@field code integer
@@ -107,6 +108,12 @@ function M.find_repo(dir)
   if res.code ~= 0 then
     if res.code == -1 then
       return nil, 'git command not found, please install it'
+    end
+    -- a bare repo (`proj.git`, or `proj/` with a `.git` file pointing to `.bare`) has no top level
+    local bare = M.lines(dir, { 'rev-parse', '--is-bare-repository', '--git-common-dir' })
+    if bare and bare[1] == 'true' and bare[2] then
+      local common_dir = absolute(bare[2], dir)
+      return { root = common_dir, git_dir = common_dir, common_dir = common_dir, bare = true }
     end
     return nil, 'does not seem to be a valid git repo: ' .. dir
   end

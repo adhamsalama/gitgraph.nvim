@@ -312,6 +312,17 @@ end
 function StatusPanel:refresh()
   self.generation = self.generation + 1
   local gen = self.generation
+  if self.repo.bare then
+    self.status = { branch = '', no_commits = false, entries = {} }
+    self:set({
+      { text = ' No worktree open', hl = 'GitGraphStatusBranch' },
+      { text = '' },
+      { text = ' In Branches → Worktrees:', hl = 'GitGraphStatusClean' },
+      { text = '   <Space> opens a worktree', hl = 'GitGraphStatusClean' },
+      { text = '   n creates one', hl = 'GitGraphStatusClean' },
+    })
+    return
+  end
   local args = { '--no-optional-locks', 'status', '--porcelain=v1', '-z', '--branch', '--untracked-files=all' }
   git.run_async(self.repo.root, args, function(res)
     if gen ~= self.generation or not self:valid() then

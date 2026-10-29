@@ -7,6 +7,7 @@ local status_mod = require('gitgraph.workspace.status')
 local branches_mod = require('gitgraph.workspace.branches')
 local jobs = require('gitgraph.workspace.jobs')
 local commit = require('gitgraph.workspace.commit')
+local worktrees = require('gitgraph.worktrees')
 
 --- The git workspace: a tab with the status and branches panels on the left and the graph on the right.
 local M = {}
@@ -62,6 +63,10 @@ end
 function M.commit(amend)
   local ws = M.state
   if not ws then
+    return
+  end
+  if ws.repo.bare then
+    vim.notify('No worktree open: open one in Branches → Worktrees', vim.log.levels.WARN)
     return
   end
   local function on_done()
@@ -150,13 +155,121 @@ local function follow_branch()
       if M.state ~= ws or vim.api.nvim_get_current_buf() ~= ws.branches.buf then
         return
       end
-      local item = ws.branches:item()
+      local target = branches_mod.graph_target(ws.branches:item())
       local args = require('gitgraph').last_args
-      if item and item.ref and not (args and args.revision_range == item.ref.name) then
-        M.show_in_graph({ revision_range = item.ref.name })
+      if target and not (args and args.revision_range == target) then
+        M.show_in_graph({ revision_range = target })
       end
     end)
   )
+end
+
+---@param ws I.Workspace
+local function show_worktree(ws)
+  if vim.api.nvim_win_is_valid(ws.wins.status) then
+    local where = ws.repo.bare and 'no worktree' or vim.fn.fnamemodify(ws.repo.root, ':~')
+    vim.wo[ws.wins.status].winbar = ' Status: ' .. where
+  end
+end
+
+--- Makes `repo`'s worktree Neovim's working directory (`:cd`, so every tab without its own `:tcd`/`:lcd`
+--- follows), as if it were a plain clone. Without a worktree: the folder the worktrees live in.
+---@param repo I.Repo
+local function cd(repo)
+  local dir = repo.root
+  if repo.bare then
+    local list = worktrees.list(repo.root)
+    dir = list and worktrees.base_dir(repo, list) or vim.fs.dirname(repo.common_dir)
+  end
+  vim.cmd.cd(vim.fn.fnameescape(dir))
+end
+
+--- File buffers: what's closed when switching worktree.
+---@return integer[]
+local function file_buffers()
+  return vim.tbl_filter(function(buf)
+    return vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].buftype == '' and (vim.bo[buf].buflisted or vim.bo[buf].modified)
+  end, vim.api.nvim_list_bufs())
+end
+
+--- Closes every tab but the workspace and every file buffer, so nothing from the old worktree stays open.
+--- Unsaved changes are saved first (after asking), or nothing is closed.
+---@param ws I.Workspace
+---@param on_closed fun()
+local function close_everything(ws, on_closed)
+  local function close()
+    vim.api.nvim_set_current_tabpage(ws.tab)
+    vim.cmd('silent! tabonly')
+    for _, buf in ipairs(file_buffers()) do
+      pcall(vim.api.nvim_buf_delete, buf, {})
+    end
+    on_closed()
+  end
+
+  local modified = vim.tbl_filter(function(buf)
+    return vim.bo[buf].modified
+  end, file_buffers())
+  if #modified == 0 then
+    close()
+    return
+  end
+  local names = vim.tbl_map(function(buf)
+    local name = vim.api.nvim_buf_get_name(buf)
+    return name == '' and '[No Name]' or vim.fn.fnamemodify(name, ':~:.')
+  end, modified)
+  local prompt = ('Switching worktree closes all tabs and buffers. Save %s first?'):format(table.concat(names, ', '))
+  vim.ui.select({ 'Save and switch', 'Cancel' }, { prompt = prompt }, function(choice)
+    if choice ~= 'Save and switch' then
+      return
+    end
+    for _, buf in ipairs(modified) do
+      local ok, err = pcall(vim.api.nvim_buf_call, buf, function()
+        vim.cmd('silent write')
+      end)
+      if not ok or vim.bo[buf].modified then
+        local name = vim.api.nvim_buf_get_name(buf)
+        vim.notify(('Could not save %s, not switching:\n%s'):format(name == '' and '[No Name]' or name, err or ''), vim.log.levels.ERROR)
+        return
+      end
+    end
+    close()
+  end)
+end
+
+--- Points the workspace at another worktree of the same repo (nil: the bare repo itself, no worktree),
+--- after closing every other tab and every file buffer, and cds into it.
+---@param path? string
+---@param on_switched? fun()
+function M.switch_worktree(path, on_switched)
+  local ws = M.state
+  if not ws then
+    return
+  end
+  local repo, err = git.find_repo(path or ws.repo.common_dir)
+  if not repo then
+    vim.notify('GitGraph: ' .. err, vim.log.levels.ERROR)
+    return
+  end
+  close_everything(ws, function()
+    M._set_repo(ws, repo)
+    if on_switched then
+      on_switched()
+    end
+  end)
+end
+
+---@param ws I.Workspace
+---@param repo I.Repo
+function M._set_repo(ws, repo)
+  ws.repo = repo
+  ws.status.repo = repo
+  ws.branches.repo = repo
+  cd(repo)
+  show_worktree(ws)
+  watch.start(repo)
+  M.refresh_panels()
+  M.show_in_graph({})
+  vim.notify(repo.bare and 'No worktree open' or ('Switched to worktree ' .. vim.fn.fnamemodify(repo.root, ':~')), vim.log.levels.INFO)
 end
 
 --- After a network operation: refs and the working tree may both have changed.
@@ -399,7 +512,65 @@ local function create_autocmds(ws)
   })
 end
 
---- Opens the workspace for the current file's repo, or switches to it if it's already open.
+--- `git clone --bare` doesn't map the remote's branches to `origin/…`: fetch overwrites the local
+--- branches directly, the Remotes tab stays empty and nothing has an upstream. Offers the standard
+--- setup once per repo (a "No" is remembered in the repo's config).
+---@param repo I.Repo
+function M.offer_remote_branches(repo)
+  local root = repo.common_dir
+  if (git.lines(root, { 'config', '--bool', 'core.bare' }) or {})[1] ~= 'true' then
+    return
+  end
+  if (git.lines(root, { 'config', '--bool', 'gitgraph.skipRemoteBranches' }) or {})[1] == 'true' then
+    return
+  end
+  local missing = vim.tbl_filter(function(remote)
+    return git.run(root, { 'config', '--get', 'remote.' .. remote .. '.fetch' }).code ~= 0
+  end, git.lines(root, { 'remote' }) or {})
+  if #missing == 0 then
+    return
+  end
+  -- origin first: it wins when several remotes have a branch of the same name
+  table.sort(missing, function(a, b)
+    return a == 'origin' or (b ~= 'origin' and a < b)
+  end)
+
+  local prompt = ('This bare clone has no remote branches (%s/…): the Remotes tab stays empty and pull/push have no upstream. '):format(missing[1])
+    .. ('Set up the standard remote branches for %s, fetch, and make local branches track them?'):format(table.concat(missing, ', '))
+  vim.ui.select({ 'Yes', 'No' }, { prompt = prompt }, function(choice)
+    if choice ~= 'Yes' then
+      git.run(root, { 'config', 'gitgraph.skipRemoteBranches', 'true' })
+      return
+    end
+    for _, remote in ipairs(missing) do
+      git.run(root, { 'config', 'remote.' .. remote .. '.fetch', ('+refs/heads/*:refs/remotes/%s/*'):format(remote) })
+    end
+    jobs.fetch(repo, function(ok)
+      if ok then
+        local tracked = {}
+        local branches = git.lines(root, { 'for-each-ref', '--format=%(refname:short)%00%(upstream)', 'refs/heads' }) or {}
+        for _, line in ipairs(branches) do
+          local name, upstream = unpack(vim.split(line, '\0', { plain = true }))
+          for _, remote in ipairs(missing) do
+            local target = remote .. '/' .. name
+            if upstream == '' and git.run(root, { 'rev-parse', '-q', '--verify', 'refs/remotes/' .. target }).code == 0 then
+              git.run(root, { 'branch', '--set-upstream-to=' .. target, name })
+              tracked[#tracked + 1] = name
+              break
+            end
+          end
+        end
+        if #tracked > 0 then
+          vim.notify('Now tracking remote branches: ' .. table.concat(tracked, ', '), vim.log.levels.INFO)
+        end
+      end
+      after_job()
+    end)
+  end)
+end
+
+--- Opens the workspace for the current file's repo, or switches to it if it's already open. From a
+--- bare repo's folder it asks which worktree to open (none: opens without one).
 function M.open()
   if M.state and vim.api.nvim_tabpage_is_valid(M.state.tab) then
     vim.api.nvim_set_current_tabpage(M.state.tab)
@@ -408,13 +579,41 @@ function M.open()
   end
   teardown()
 
-  local gg = require('gitgraph')
-  local repo, err = gg._resolve_repo()
+  local repo, err = require('gitgraph')._resolve_repo()
   if not repo then
     vim.notify('GitGraph: ' .. err, vim.log.levels.ERROR)
     return
   end
+  if not repo.bare then
+    M._open(repo)
+    return
+  end
 
+  local list = worktrees.list(repo.root)
+  local usable = list and worktrees.usable(repo, list) or {}
+  if #usable == 0 then
+    M._open(repo)
+    return
+  end
+  local base = worktrees.real(worktrees.base_dir(repo, list))
+  vim.ui.select(usable, {
+    prompt = 'Open which worktree?',
+    format_item = function(wt)
+      local path = worktrees.display(worktrees.real(wt.path), base)
+      return wt.branch and wt.branch ~= path and (wt.branch .. '  ' .. path) or path
+    end,
+  }, function(wt)
+    local wt_repo = wt and git.find_repo(wt.path)
+    if wt_repo then
+      cd(wt_repo)
+      M._open(wt_repo)
+    end
+  end)
+end
+
+---@param repo I.Repo
+function M._open(repo)
+  local gg = require('gitgraph')
   guard.tabnew()
   utils.name_tab(gg.config.tab_name)
   local placeholder = vim.api.nvim_get_current_buf()
@@ -440,7 +639,7 @@ function M.open()
   end)
   vim.api.nvim_win_set_buf(status_win, ws.status.buf)
 
-  ws.branches = branches_mod.new(repo, workspace_keys(), M.refresh_panels, M.show_in_graph)
+  ws.branches = branches_mod.new(repo, workspace_keys(), M.refresh_panels, M.show_in_graph, M.switch_worktree)
   vim.api.nvim_win_set_buf(branches_win, ws.branches.buf)
   if vim.api.nvim_buf_is_valid(placeholder) and #vim.fn.win_findbuf(placeholder) == 0 then
     pcall(vim.api.nvim_buf_delete, placeholder, {})
@@ -462,8 +661,8 @@ function M.open()
   end
   vim.api.nvim_win_set_width(status_win, math.max(30, math.floor(vim.o.columns * 0.25)))
   vim.api.nvim_win_set_height(status_win, math.floor(vim.o.lines * 0.45))
-  vim.wo[status_win].winbar = ' Status'
   vim.wo[branches_win].winbar = ' Branches'
+  show_worktree(ws)
 
   create_autocmds(ws)
 
@@ -475,8 +674,11 @@ function M.open()
   watch.start(repo)
   watch.subscribe('workspace', M.refresh_panels, { index = true })
 
-  vim.api.nvim_set_current_win(status_win)
+  vim.api.nvim_set_current_win(repo.bare and branches_win or status_win)
   M.refresh_panels()
+  vim.schedule(function()
+    M.offer_remote_branches(repo)
+  end)
 end
 
 return M
