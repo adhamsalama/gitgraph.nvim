@@ -102,6 +102,88 @@ M._resolve_repo = resolve_repo
 
 M.last_search_fields = M.last_search_fields or {}
 
+--- Sticky merge-commit filter applied to every draw that doesn't set `merges`/`no_merges` itself:
+--- 'all', 'only' (`--merges`) or 'hide' (`--no-merges`).
+M.merge_filter = 'all'
+
+local MERGE_FILTERS = { 'all', 'only', 'hide' }
+local MERGE_FILTER_LABELS = { all = 'All commits', only = 'Merge commits only', hide = 'Hide merge commits' }
+
+---@param args I.GitLogArgs
+local function apply_merge_filter(args)
+  if args.merges == nil and args.no_merges == nil then
+    args.merges = M.merge_filter == 'only' or nil
+    args.no_merges = M.merge_filter == 'hide' or nil
+  end
+end
+
+--- The merge mode a draw's args resolve to (search panel flags can differ from `merge_filter`).
+---@param args? I.GitLogArgs
+---@return 'all'|'only'|'hide'
+function M.merge_mode(args)
+  args = args or M.last_args or {}
+  return args.merges and 'only' or args.no_merges and 'hide' or 'all'
+end
+
+--- Sets the merge filter ('all'|'only'|'hide') and redraws in place.
+---@param mode 'all'|'only'|'hide'
+function M.set_merge_filter(mode)
+  if not MERGE_FILTER_LABELS[mode] then
+    vim.notify('GitGraph: merge filter must be all, only or hide', vim.log.levels.ERROR)
+    return
+  end
+  M.merge_filter = mode
+  if M.last_args then
+    M.last_args.merges, M.last_args.no_merges = nil, nil
+    apply_merge_filter(M.last_args)
+    M.refresh()
+  end
+end
+
+--- Picks the merge filter from a list; the mode in effect is marked with ●.
+function M.select_merge_filter()
+  local current = M.merge_mode()
+  vim.ui.select(MERGE_FILTERS, {
+    prompt = 'Merge commits:',
+    format_item = function(mode)
+      return (mode == current and '● ' or '  ') .. MERGE_FILTER_LABELS[mode]
+    end,
+  }, function(mode)
+    if mode then
+      M.set_merge_filter(mode)
+    end
+  end)
+end
+
+--- Standalone graph windows show a non-default merge mode in their winbar (the workspace graph names it in
+--- its own winbar). Only a winbar we set is cleared again.
+local function update_merge_winbar()
+  if not M.buf or not vim.api.nvim_buf_is_valid(M.buf) then
+    return
+  end
+  local ws = package.loaded['gitgraph.workspace'] and require('gitgraph.workspace').state
+  local mode = M.merge_mode()
+  for _, win in ipairs(vim.fn.win_findbuf(M.buf)) do
+    if not (ws and ws.wins.graph == win) then
+      if mode ~= 'all' then
+        vim.wo[win].winbar = ' ' .. MERGE_FILTER_LABELS[mode]
+        vim.w[win].gitgraph_merge_winbar = true
+      elseif vim.w[win].gitgraph_merge_winbar then
+        vim.wo[win].winbar = ''
+        vim.w[win].gitgraph_merge_winbar = nil
+      end
+    end
+  end
+end
+
+if vim and vim.api and vim.api.nvim_create_autocmd then
+  vim.api.nvim_create_autocmd('User', {
+    group = vim.api.nvim_create_augroup('GitGraphMergeWinbar', { clear = true }),
+    pattern = 'GitGraphRendered',
+    callback = update_merge_winbar,
+  })
+end
+
 --- Setup
 ---@param user_config I.GGConfig
 function M.setup(user_config)
@@ -137,6 +219,7 @@ function M.draw(options, args)
     return
   end
   M.repo = repo
+  apply_merge_filter(args)
   M.last_args = vim.deepcopy(args)
   M.last_options = vim.deepcopy(options or {})
   M._dirty = false
@@ -351,6 +434,22 @@ if vim and vim.api and vim.api.nvim_create_user_command then
   vim.api.nvim_create_user_command("GitGraphWorkspace", function()
     require('gitgraph.workspace').open()
   end, { desc = "GitGraph: Open the git workspace (status, branches, graph)" })
+end
+
+if vim and vim.api and vim.api.nvim_create_user_command then
+  vim.api.nvim_create_user_command("GitGraphMerges", function(o)
+    if o.args == '' then
+      require('gitgraph').select_merge_filter()
+    else
+      require('gitgraph').set_merge_filter(o.args)
+    end
+  end, {
+    nargs = '?',
+    complete = function()
+      return { 'all', 'only', 'hide' }
+    end,
+    desc = "GitGraph: show all commits, merge commits only, or hide merge commits (no argument: pick from a list)",
+  })
 end
 
 if vim and vim.api and vim.api.nvim_create_user_command then

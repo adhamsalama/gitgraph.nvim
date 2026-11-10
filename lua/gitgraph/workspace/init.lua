@@ -117,12 +117,20 @@ end
 ---@param args I.GitLogArgs
 ---@return string
 local function describe(args)
+  local what
   if args.all then
-    return 'all refs'
+    what = 'all refs'
   elseif args.revision_range then
-    return (args.revision_range:gsub('%s+', ' + '))
+    what = (args.revision_range:gsub('%s+', ' + '))
+  else
+    what = 'local branches'
   end
-  return 'local branches'
+  if args.merges then
+    what = what .. ' (merges only)'
+  elseif args.no_merges then
+    what = what .. ' (no merges)'
+  end
+  return what
 end
 
 --- Draws `args` in the workspace graph without moving focus, and names what's shown in its winbar.

@@ -142,6 +142,9 @@ work on Linux.
 ## User commands
 
 - `:GitGraphWorkspace`: open (or switch to) the workspace
+- `:GitGraphMerges [all|only|hide]` (graph key `<leader>gVm`): sticky merge-commit filter
+  (`gitgraph.merge_filter`; no argument or `<leader>gVm`: a selector marking the current mode), applied to every draw that doesn't set `merges`/`no_merges` itself
+  (search panel flags win); shown in the graph winbar (standalone: only when not "all")
 - `:GitGraphSelectBranch`, `:GitGraphAuthor`, `:GitGraphMessage`, `:GitGraphSearch` (search panel),
   `:GitGraphMaxCount`
 
