@@ -59,6 +59,7 @@ end
 ---@field on_error? fun(res: I.GitResult): boolean -- return true if handled (no error notification)
 ---@field env? table<string, string> -- added to (or overriding) the job environment
 ---@field branch? string -- local branch the job acts on (shown with a spinner in the branches panel)
+---@field runner? fun(root: string, args: string[], on_exit: fun(res: I.GitResult), opts: table) -- default: git.run_async (e.g. github.run_async for gh)
 
 --- Runs a git command in the background, one per title at a time.
 ---@param repo I.Repo
@@ -76,7 +77,8 @@ function M.run(repo, args, opts)
     changed()
   end
 
-  git.run_async(repo.root, args, function(res)
+  local runner = opts.runner or git.run_async
+  runner(repo.root, args, function(res)
     running[opts.title] = nil
     if M.active[opts.title] then
       M.active[opts.title] = nil

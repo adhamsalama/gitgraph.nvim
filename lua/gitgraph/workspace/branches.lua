@@ -2,6 +2,7 @@ local git = require('gitgraph.git')
 local panel_mod = require('gitgraph.workspace.panel')
 local jobs = require('gitgraph.workspace.jobs')
 local worktrees = require('gitgraph.worktrees')
+local github = require('gitgraph.github')
 
 --- The workspace branches panel: local branches, remote branches, tags and worktrees.
 local M = {}
@@ -18,6 +19,11 @@ for name, link in pairs({
   GitGraphBranchesFilter = 'Special',
   GitGraphBranchesWorktree = 'Comment',
   GitGraphBranchesJob = 'DiagnosticInfo',
+  GitGraphBranchesPrNumber = 'Number',
+  GitGraphBranchesPrAuthor = 'Comment',
+  GitGraphBranchesPrDraft = 'Comment',
+  GitGraphBranchesPrApproved = 'Added',
+  GitGraphBranchesPrChanges = 'Removed',
 }) do
   vim.api.nvim_set_hl(0, name, { link = link, default = true })
 end
@@ -42,8 +48,12 @@ local TABS = {
   { kind = 'remote', title = 'Remotes', prefix = 'refs/remotes/' },
   { kind = 'tag', title = 'Tags', prefix = 'refs/tags/' },
   { kind = 'worktree', title = 'Worktrees' },
+  { kind = 'pr', title = 'PRs' },
 }
-M.WORKTREE_TAB = #TABS
+M.WORKTREE_TAB = 4
+M.PR_TAB = 5
+--- Seconds before refreshes (watcher events, tab switches) ask GitHub for the PR list again.
+M.PR_MAX_AGE = 60
 
 local FORMAT = table.concat({
   '%(HEAD)',
@@ -117,6 +127,10 @@ end
 ---@field tab integer -- index into TABS
 ---@field filter string
 ---@field generation integer
+---@field prs? I.PullRequest[] -- nil until loaded
+---@field prs_error? string
+---@field prs_time? integer -- when the PR list was last requested
+---@field prs_loading? boolean
 ---@field select_next? string -- ref to put the cursor on after the next refresh (a renamed or new branch)
 ---@field on_render? fun()
 ---@field on_change fun() -- after an action changed the repo
@@ -132,6 +146,8 @@ function M.graph_target(item)
     return item.ref.name
   elseif item and item.worktree and item.worktree.head ~= '' then
     return item.worktree.branch or item.worktree.head
+  elseif item and item.pr then
+    return item.target
   end
 end
 
@@ -200,6 +216,133 @@ function BranchesPanel:render_worktrees(lines)
   return lines
 end
 
+--- Branch the graph shows for a PR: its remote branch (what the PR contains), else a local branch of
+--- that name. Nothing for a fork's PR unless it was checked out.
+---@param pr I.PullRequest
+---@return string?
+function BranchesPanel:pr_target(pr)
+  local local_branch
+  for _, ref in ipairs(self.refs) do
+    if not pr.fork and ref.kind == 'remote' and ref.name:match('^[^/]+/(.+)$') == pr.head then
+      return ref.name
+    elseif ref.kind == 'local' and ref.name == pr.head then
+      local_branch = ref.name
+    end
+  end
+  return local_branch
+end
+
+---@param lines I.PanelLine[]
+---@return I.PanelLine[]
+function BranchesPanel:render_prs(lines)
+  local function message(text, hl)
+    lines[#lines + 1] = { text = '   ' .. text, hl = hl or 'GitGraphBranchesDate', item = { kind = 'empty' } }
+    return lines
+  end
+  if self.prs_error then
+    return message(self.prs_error:gsub('\n.*', ''), 'DiagnosticError')
+  elseif not self.prs then
+    return message('loading…')
+  end
+
+  local current
+  for _, ref in ipairs(self.refs) do
+    if ref.head then
+      current = ref.name
+    end
+  end
+  local filter = self.filter:lower()
+  local list = vim.tbl_filter(function(pr)
+    local haystack = ('#%d %s %s %s'):format(pr.number, pr.title, pr.head, pr.author):lower()
+    return filter == '' or haystack:find(filter, 1, true) ~= nil
+  end, self.prs)
+  -- the current branch's PR first, the rest newest first (gh's order)
+  table.sort(list, function(a, b)
+    local ca, cb = a.head == current, b.head == current
+    if ca ~= cb then
+      return ca
+    end
+    return a.number > b.number
+  end)
+
+  local now = os.time()
+  for _, pr in ipairs(list) do
+    local is_current = pr.head == current
+    local line = is_current and ' * ' or '   '
+    local number = '#' .. pr.number
+    local marks = { { hl = 'GitGraphBranchesPrNumber', start = #line, stop = #line + #number } }
+    line = line .. number .. ' '
+    if is_current then
+      marks[#marks + 1] = { hl = 'GitGraphBranchesHead', start = #line, stop = #line + #pr.title }
+    end
+    line = line .. pr.title
+    local function add(str, hl)
+      line = line .. ' '
+      marks[#marks + 1] = { hl = hl, start = #line, stop = #line + #str }
+      line = line .. str
+    end
+    if pr.draft then
+      add('draft', 'GitGraphBranchesPrDraft')
+    end
+    if pr.review == 'APPROVED' then
+      add('approved', 'GitGraphBranchesPrApproved')
+    elseif pr.review == 'CHANGES_REQUESTED' then
+      add('changes requested', 'GitGraphBranchesPrChanges')
+    end
+    if pr.author ~= '' then
+      add('@' .. pr.author, 'GitGraphBranchesPrAuthor')
+    end
+    add(M.age(pr.time, now), 'GitGraphBranchesDate')
+    lines[#lines + 1] = { text = line, marks = marks, item = { kind = 'pr', pr = pr, target = self:pr_target(pr) } }
+  end
+
+  if #list == 0 then
+    return message(self.filter ~= '' and 'no matches' or 'no open pull requests')
+  end
+  return lines
+end
+
+--- Asks GitHub for the open PRs (unless a recent answer is still fresh), then redraws.
+---@param force? boolean
+function BranchesPanel:load_prs(force)
+  if self.prs_loading or (not force and self.prs_time and os.time() - self.prs_time < M.PR_MAX_AGE) then
+    return
+  end
+  self.prs_loading = true
+  self.prs_time = os.time()
+  local root = self.repo.root
+  github.list_async(root, function(prs, err)
+    self.prs_loading = false
+    if not self:valid() or self.repo.root ~= root then
+      return
+    end
+    self.prs, self.prs_error = prs, err
+    if TABS[self.tab].kind == 'pr' then
+      self:redraw()
+      if self.on_render then
+        self.on_render()
+      end
+    end
+  end)
+end
+
+---@param pr I.PullRequest
+function BranchesPanel:checkout_pr(pr)
+  if self.repo.bare then
+    vim.notify('No worktree is open: switch to a worktree first', vim.log.levels.WARN)
+    return
+  end
+  jobs.run(self.repo, { 'pr', 'checkout', tostring(pr.number) }, {
+    title = 'Checking out #' .. pr.number,
+    runner = github.run_async,
+    on_done = function(ok)
+      if ok then
+        self.on_change()
+      end
+    end,
+  })
+end
+
 ---@return I.PanelLine[]
 function BranchesPanel:render()
   local lines = {}
@@ -223,6 +366,8 @@ function BranchesPanel:render()
   local kind = TABS[self.tab].kind
   if kind == 'worktree' then
     return self:render_worktrees(lines)
+  elseif kind == 'pr' then
+    return self:render_prs(lines)
   end
   local refs = vim.tbl_filter(function(ref)
     return ref.kind == kind and (self.filter == '' or ref.name:lower():find(self.filter:lower(), 1, true) ~= nil)
@@ -276,20 +421,22 @@ end
 ---@param keep_ref? string
 function BranchesPanel:redraw(keep_ref)
   local current = self:item()
-  keep_ref = keep_ref or (current and (current.ref and current.ref.name or current.worktree and current.worktree.path))
+  keep_ref = keep_ref
+    or (current and (current.ref and current.ref.name or current.worktree and current.worktree.path or current.pr and ('#' .. current.pr.number)))
   local row = self:cursor_row() or 1
   self:set(self:render())
 
   local target
   for i, item in pairs(self.items) do
-    if (item.ref and item.ref.name == keep_ref) or (item.worktree and item.worktree.path == keep_ref) then
+    local key = item.ref and item.ref.name or item.worktree and item.worktree.path or item.pr and ('#' .. item.pr.number)
+    if key and key == keep_ref then
       target = i
     end
   end
   if not target then
     -- first ref row at or after the old row, else the last ref
     for i = row, #self.lines do
-      if self.items[i] and (self.items[i].ref or self.items[i].worktree) then
+      if self.items[i] and (self.items[i].ref or self.items[i].worktree or self.items[i].pr) then
         target = i
         break
       end
@@ -389,6 +536,9 @@ function BranchesPanel:refresh()
       self.on_render()
     end
   end
+  if TABS[self.tab].kind == 'pr' then
+    self:load_prs()
+  end
   git.run_async(self.repo.root, args, function(r)
     res = r
     done()
@@ -402,6 +552,9 @@ end
 ---@param step integer
 function BranchesPanel:switch_tab(step)
   self.tab = (self.tab - 1 + step) % #TABS + 1
+  if TABS[self.tab].kind == 'pr' then
+    self:load_prs()
+  end
   self:redraw()
   self:set_cursor_row(self.filter ~= '' and 3 or 2)
   if self.on_render then
@@ -857,19 +1010,26 @@ end
 function M.new(repo, extra_keys, on_change, show_in_graph, switch_worktree)
   ---@param fn fun(panel: I.BranchesPanel, ref: I.Ref)
   ---@param on_worktree? fun(panel: I.BranchesPanel, wt: I.Worktree)
-  local function on_ref(fn, on_worktree)
+  ---@param on_pr? fun(panel: I.BranchesPanel, pr: I.PullRequest)
+  local function on_ref(fn, on_worktree, on_pr)
     return function(panel)
       local item = panel:item()
       if item and item.ref then
         fn(panel, item.ref)
       elseif item and item.worktree and on_worktree then
         on_worktree(panel, item.worktree)
+      elseif item and item.pr and on_pr then
+        on_pr(panel, item.pr)
       end
     end
   end
 
   local keys = {
-    { '<Space>', on_ref(BranchesPanel.checkout, BranchesPanel.switch_to), desc = 'Check out; on a worktree: switch to it' },
+    {
+      '<Space>',
+      on_ref(BranchesPanel.checkout, BranchesPanel.switch_to, BranchesPanel.checkout_pr),
+      desc = 'Check out; on a worktree: switch to it; on a PR: gh pr checkout',
+    },
     {
       '<CR>',
       function(panel)
@@ -913,9 +1073,25 @@ function M.new(repo, extra_keys, on_change, show_in_graph, switch_worktree)
     },
     { 'w', on_ref(BranchesPanel.worktree_from), desc = 'New worktree for this branch' },
     { 'd', on_ref(BranchesPanel.delete, BranchesPanel.remove_worktree), desc = 'Delete; on a worktree: remove it' },
-    { 'R', on_ref(BranchesPanel.rename), desc = 'Rename' },
+    {
+      'R',
+      function(panel)
+        if TABS[panel.tab].kind == 'pr' then
+          panel:load_prs(true)
+        else
+          on_ref(BranchesPanel.rename)(panel)
+        end
+      end,
+      desc = 'Rename; in PRs: reload the list',
+    },
     { 'u', on_ref(BranchesPanel.set_upstream), desc = 'Set upstream' },
-    { 'O', on_ref(BranchesPanel.open_pr), desc = 'Open a pull/merge request (choose the target branch)' },
+    {
+      'O',
+      on_ref(BranchesPanel.open_pr, nil, function(_, pr)
+        vim.ui.open(pr.url)
+      end),
+      desc = 'Open a pull/merge request (choose the target branch); on a PR: open it in the browser',
+    },
     {
       'r',
       on_ref(function(panel, ref)
@@ -935,7 +1111,7 @@ function M.new(repo, extra_keys, on_change, show_in_graph, switch_worktree)
       function(panel)
         panel:switch_tab(1)
       end,
-      desc = 'Next tab (Local, Remotes, Tags, Worktrees)',
+      desc = 'Next tab (Local, Remotes, Tags, Worktrees, PRs)',
       nowait = false,
     },
     {
