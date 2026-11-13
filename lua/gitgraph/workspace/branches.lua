@@ -17,6 +17,7 @@ for name, link in pairs({
   GitGraphBranchesDate = 'Comment',
   GitGraphBranchesFilter = 'Special',
   GitGraphBranchesWorktree = 'Comment',
+  GitGraphBranchesJob = 'DiagnosticInfo',
 }) do
   vim.api.nvim_set_hl(0, name, { link = link, default = true })
 end
@@ -295,6 +296,63 @@ function BranchesPanel:redraw(keep_ref)
     end
   end
   self:set_cursor_row(target or row)
+  self:draw_jobs()
+end
+
+local job_ns = vim.api.nvim_create_namespace('gitgraph_branches_jobs')
+local SPINNER = { '⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏' }
+
+--- Spinner and job title (e.g. `⠋ Pushing`) right after each local branch a job is running on.
+function BranchesPanel:draw_jobs()
+  if not self:valid() then
+    return
+  end
+  vim.api.nvim_buf_clear_namespace(self.buf, job_ns, 0, -1)
+  local frame = SPINNER[(self.spinner_frame or 0) % #SPINNER + 1]
+  for row, item in pairs(self.items) do
+    local ref = item.ref
+    local title = ref and ref.kind == 'local' and jobs.active_for(self.repo.common_dir, ref.name)
+    if title then
+      vim.api.nvim_buf_set_extmark(self.buf, job_ns, row - 1, 3 + #ref.name, {
+        virt_text = { { ' ' .. frame .. ' ' .. title, 'GitGraphBranchesJob' } },
+        virt_text_pos = 'inline',
+        strict = false,
+      })
+    end
+  end
+end
+
+--- Animates the spinners while jobs run (started on `User GitGraphJobs`).
+function BranchesPanel:update_jobs()
+  if next(jobs.active) and not self.spinner_timer then
+    self.spinner_timer = vim.uv.new_timer()
+    self.spinner_timer:start(
+      100,
+      100,
+      vim.schedule_wrap(function()
+        if not self.spinner_timer then
+          return
+        end
+        if not self:valid() then
+          self:stop_spinner()
+          return
+        end
+        self.spinner_frame = (self.spinner_frame or 0) + 1
+        self:draw_jobs()
+      end)
+    )
+  elseif not next(jobs.active) then
+    self:stop_spinner()
+  end
+  self:draw_jobs()
+end
+
+function BranchesPanel:stop_spinner()
+  if self.spinner_timer then
+    self.spinner_timer:stop()
+    self.spinner_timer:close()
+    self.spinner_timer = nil
+  end
 end
 
 function BranchesPanel:refresh()
@@ -695,6 +753,7 @@ function BranchesPanel:integrate(ref, op)
   confirm(prompt, function()
     jobs.run(self.repo, { op, ref.name }, {
       title = op == 'rebase' and 'Rebasing' or 'Merging',
+      branch = current,
       on_done = self.on_change,
       on_error = function(res)
         local out = res.stdout .. res.stderr
@@ -923,6 +982,16 @@ function M.new(repo, extra_keys, on_change, show_in_graph, switch_worktree)
   panel.on_change = on_change
   panel.show_in_graph = show_in_graph
   panel.switch_worktree = switch_worktree
+  vim.api.nvim_create_autocmd('User', {
+    pattern = 'GitGraphJobs',
+    callback = function()
+      if not panel:valid() then
+        panel:stop_spinner()
+        return true
+      end
+      panel:update_jobs()
+    end,
+  })
   return panel
 end
 
