@@ -1,11 +1,30 @@
+local git = require('gitgraph.git')
+
 local M = {}
+
+--- Root of the repo the graph is showing; nil falls back to Neovim's cwd.
+---@return string?
+local function repo_root()
+  local repo = require('gitgraph').repo
+  return repo and repo.root or nil
+end
 
 -- Helper: get current branch name
 function M.get_current_branch()
-  local handle = io.popen("git rev-parse --abbrev-ref HEAD")
-  local branch = handle and handle:read("*l") or nil
-  if handle then handle:close() end
-  return branch
+  local out = git.lines(repo_root(), { 'rev-parse', '--abbrev-ref', 'HEAD' })
+  return out and out[1] or nil
+end
+
+-- Helper: full hash of HEAD
+local function head_hash()
+  local out = git.lines(repo_root(), { 'rev-parse', 'HEAD' })
+  return out and out[1] or nil
+end
+
+-- Helper: does the abbreviated hash shown in the graph refer to HEAD?
+local function is_head(hash)
+  local head = head_hash()
+  return head ~= nil and hash ~= nil and vim.startswith(head, hash)
 end
 
 -- Helper: check if commits are reachable from HEAD (i.e., on current branch)
@@ -13,18 +32,11 @@ local function commits_reachable_from_head(commit_hashes)
   if not commit_hashes or #commit_hashes == 0 then
     return false
   end
-  
+
+  local root = repo_root()
   for _, hash in ipairs(commit_hashes) do
-    local cmd = string.format("git merge-base --is-ancestor %s HEAD", hash)
-    local handle = io.popen(cmd .. " 2>/dev/null; echo $?")
-    if handle then
-      local result = handle:read("*l")
-      handle:close()
-      -- If exit code is not 0, commit is not reachable from HEAD
-      if result and result ~= "0" then
-        return false
-      end
-    else
+    -- If exit code is not 0, commit is not reachable from HEAD
+    if git.run(root, { 'merge-base', '--is-ancestor', hash, 'HEAD' }).code ~= 0 then
       return false
     end
   end
@@ -35,36 +47,37 @@ end
 local function is_viewing_current_branch()
   local gitgraph = require('gitgraph')
   local current_branch = M.get_current_branch()
-  
+
   if not gitgraph.last_branch_args then
     return false
   end
-  
+
   -- If showing all branches, we're not viewing a specific current branch
   if gitgraph.last_branch_args.all then
     return false
   end
-  
+
   -- If viewing a specific branch, check if it matches current branch
   if gitgraph.last_branch_args.revision_range then
     return gitgraph.last_branch_args.revision_range == current_branch
   end
-  
+
   return false
 end
 
--- Helper: get last N commit hashes on branch (newest to oldest)
-local function get_last_n_commits(branch, n)
-  local cmd = string.format("git rev-list --max-count=%d %s", n, branch)
-  local handle = io.popen(cmd)
-  local hashes = {}
-  if handle then
-    for line in handle:lines() do
-      table.insert(hashes, line)
-    end
-    handle:close()
+--- Runs a git command that changes the repo in the graph's repo, and reports the outcome.
+---@param args string[]
+---@param success_msg string
+---@return boolean ok
+local function git_action(args, success_msg)
+  local res = git.run(repo_root(), args)
+  if res.code ~= 0 then
+    local output = vim.trim(res.stderr ~= '' and res.stderr or res.stdout)
+    vim.notify(('`git %s` failed:\n%s'):format(args[1], output), vim.log.levels.ERROR)
+    return false
   end
-  return hashes
+  vim.notify(success_msg, vim.log.levels.INFO)
+  return true
 end
 
 ---@param next I.Commit
@@ -357,17 +370,23 @@ function M.get_commit_from_row(graph, r)
   return commit
 end
 
-function M.apply_buffer_options(buf)
-  vim.api.nvim_set_option_value('modifiable', false, { buf = buf })
-  vim.cmd('set filetype=gitgraph')
-  vim.api.nvim_buf_set_name(buf, 'GitGraph')
+--- Names the current tab (`vim.t.name`, shown by tablines that support it instead of the tab number).
+---@param name string?
+function M.name_tab(name)
+  if name and name ~= '' then
+    vim.t.name = name
+    vim.cmd.redrawtabline()
+  end
+end
 
+--- Window-local options for the current window, which must be showing the graph.
+function M.apply_window_options()
   local options = {
     'foldcolumn=0',
     'foldlevel=999',
     -- 'norelativenumber',
     'nospell',
-    'noswapfile',
+    'nowrap',
   }
   -- Vim's `setlocal` is currently more robust compared to `opt_local`
   vim.cmd(('silent! noautocmd setlocal %s'):format(table.concat(options, ' ')))
@@ -386,17 +405,8 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
       
       -- Only show reset if we're viewing the current branch AND commit is reachable from HEAD
       if is_viewing_current_branch() then
-        local head_hash = nil
-        do
-          local handle = io.popen("git rev-parse --short=7 HEAD")
-          if handle then
-            head_hash = handle:read("*l")
-            handle:close()
-          end
-        end
-        
         -- Check if this commit is HEAD and reachable (should always be true for HEAD)
-        if head_hash and commit.hash == head_hash and commits_reachable_from_head({commit.hash}) then
+        if is_head(commit.hash) and commits_reachable_from_head({commit.hash}) then
           should_show_reset = true
         end
       end
@@ -418,10 +428,10 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
         {
           label = "Cherry-pick",
           fn = function(c)
-            vim.fn.system({ "git", "cherry-pick", c.hash })
-            vim.notify("Cherry-picked " .. c.hash:sub(1,7), vim.log.levels.INFO)
-            -- Redraw the graph after cherry-pick
-            require('gitgraph').draw({}, { all = true })
+            if git_action({ "cherry-pick", c.hash }, "Cherry-picked " .. c.hash:sub(1,7)) then
+              -- Redraw the graph after cherry-pick
+              require('gitgraph').draw({}, { all = true })
+            end
           end,
         },
         -- Add more actions here as needed
@@ -444,20 +454,12 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
                   vim.notify("Revert aborted: no mainline parent selected", vim.log.levels.WARN)
                   return
                 end
-                local output = vim.fn.systemlist({ "git", "revert", "-m", tostring(idx), c.hash })
-                if vim.v.shell_error ~= 0 then
-                  vim.notify("Revert failed:\n" .. table.concat(output, "\n"), vim.log.levels.ERROR)
-                else
-                  vim.notify("Reverted merge commit " .. c.hash:sub(1,7) .. " (mainline " .. idx .. ")", vim.log.levels.INFO)
+                if git_action({ "revert", "-m", tostring(idx), c.hash }, "Reverted merge commit " .. c.hash:sub(1,7) .. " (mainline " .. idx .. ")") then
                   require('gitgraph').draw({}, { all = true })
                 end
               end)
             else
-              local output = vim.fn.systemlist({ "git", "revert", c.hash })
-              if vim.v.shell_error ~= 0 then
-                vim.notify("Revert failed:\n" .. table.concat(output, "\n"), vim.log.levels.ERROR)
-              else
-                vim.notify("Reverted " .. c.hash:sub(1,7), vim.log.levels.INFO)
+              if git_action({ "revert", c.hash }, "Reverted " .. c.hash:sub(1,7)) then
                 require('gitgraph').draw({}, { all = true })
               end
             end
@@ -469,29 +471,25 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
       do
         -- Get all local branches and their tip hashes
         local current_branch = M.get_current_branch()
-        local handle = io.popen("git for-each-ref --format='%(refname:short) %(objectname:short)' refs/heads/")
         local branch_tips = {}
-        if handle then
-          for line in handle:lines() do
-            local name, hash = line:match("^([%w%p]+)%s+([a-f0-9]+)$")
-            if name and hash then
-              branch_tips[#branch_tips+1] = { name = name, hash = hash }
-            end
+        for _, line in ipairs(git.lines(repo_root(), { "for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/" }) or {}) do
+          local name, hash = line:match("^(%S+)%s+(%x+)$")
+          if name and hash then
+            branch_tips[#branch_tips+1] = { name = name, hash = hash }
           end
-          handle:close()
+        end
+        -- the graph shows abbreviated hashes, the refs are full ones
+        local function is_tip(branch)
+          return vim.startswith(branch.hash, commit.hash) and branch.name ~= current_branch
         end
         for _, branch in ipairs(branch_tips) do
-          if branch.hash == commit.hash and branch.name ~= current_branch then
+          if is_tip(branch) then
             table.insert(actions, {
               label = "Merge branch '" .. branch.name .. "' into " .. current_branch,
               fn = function(c)
                 vim.ui.select({ "Yes", "No" }, { prompt = "Merge branch '" .. branch.name .. "' into " .. current_branch .. "?" }, function(choice)
                   if choice == "Yes" then
-                    local output = vim.fn.systemlist({ "git", "merge", "--no-ff", branch.name })
-                    if vim.v.shell_error ~= 0 then
-                      vim.notify("Merge failed:\n" .. table.concat(output, "\n"), vim.log.levels.ERROR)
-                    else
-                      vim.notify("Merged branch '" .. branch.name .. "' into " .. current_branch, vim.log.levels.INFO)
+                    if git_action({ "merge", "--no-ff", branch.name }, "Merged branch '" .. branch.name .. "' into " .. current_branch) then
                       require('gitgraph').draw({}, { all = true })
                     end
                   end
@@ -503,17 +501,13 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
 
         -- Add "Check out branch" action if this commit is the tip of any branch (not current branch)
         for _, branch in ipairs(branch_tips) do
-          if branch.hash == commit.hash and branch.name ~= current_branch then
+          if is_tip(branch) then
             table.insert(actions, {
               label = "Check out branch '" .. branch.name .. "'",
               fn = function(c)
                 vim.ui.select({ "Yes", "No" }, { prompt = "Check out branch '" .. branch.name .. "'?" }, function(choice)
                   if choice == "Yes" then
-                    local output = vim.fn.systemlist({ "git", "checkout", branch.name })
-                    if vim.v.shell_error ~= 0 then
-                      vim.notify("Checkout failed:\n" .. table.concat(output, "\n"), vim.log.levels.ERROR)
-                    else
-                      vim.notify("Checked out branch '" .. branch.name .. "'", vim.log.levels.INFO)
+                    if git_action({ "checkout", branch.name }, "Checked out branch '" .. branch.name .. "'") then
                       -- Update branch context and redraw with the new current branch
                       local gitgraph = require('gitgraph')
                       gitgraph.last_branch_args = { revision_range = branch.name, all = false }
@@ -527,15 +521,19 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
         end
       end
 
+      -- fixup/reword/drop/move via `git rebase -i` (only for commits on the current branch)
+      local repo = require('gitgraph').repo
+      if repo then
+        vim.list_extend(actions, require('gitgraph.rewrite').actions(repo, commit))
+      end
+
       if should_show_reset then
         table.insert(actions, {
           label = "Soft Reset (HEAD~1)",
           fn = function(c)
             local reset_to = c.hash .. "^"
             vim.ui.select({ "Yes", "No" }, { prompt = "Soft reset HEAD to " .. reset_to .. "?" }, function(choice)
-              if choice == "Yes" then
-                vim.fn.system({ "git", "reset", "--soft", reset_to })
-                vim.notify("Soft reset to " .. reset_to, vim.log.levels.INFO)
+              if choice == "Yes" and git_action({ "reset", "--soft", reset_to }, "Soft reset to " .. reset_to) then
                 require('gitgraph').draw({}, { all = true })
               end
             end)
@@ -546,9 +544,7 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
           fn = function(c)
             local reset_to = c.hash .. "^"
             vim.ui.select({ "Yes", "No" }, { prompt = "Hard reset HEAD to " .. reset_to .. "? This is destructive!" }, function(choice)
-              if choice == "Yes" then
-                vim.fn.system({ "git", "reset", "--hard", reset_to })
-                vim.notify("Hard reset to " .. reset_to, vim.log.levels.INFO)
+              if choice == "Yes" and git_action({ "reset", "--hard", reset_to }, "Hard reset to " .. reset_to) then
                 require('gitgraph').draw({}, { all = true })
               end
             end)
@@ -575,6 +571,14 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
   vim.keymap.set('n', '<leader>gVc', function()
     require('gitgraph').select_and_draw_max_count()
   end, { buffer = buf_id, desc = "Set max commit count interactively" })
+
+  vim.keymap.set('n', '<leader>gVm', function()
+    require('gitgraph').select_merge_filter()
+  end, { buffer = buf_id, desc = "Merge commits: all / only merges / hide merges" })
+
+  vim.keymap.set('n', '<leader>gVf', function()
+    require('gitgraph.focus').toggle()
+  end, { buffer = buf_id, desc = "Toggle branch focus (dim commits not reachable from this one)" })
 
   vim.keymap.set('v', '<CR>', function()
     -- make sure visual selection is done
@@ -628,17 +632,8 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
       -- 2. All selected commits are reachable from HEAD
       -- 3. The newest commit in selection (first in oldest-to-newest array) is HEAD
       if is_viewing_current_branch() and #selected_hashes > 0 then
-        local head_hash = nil
-        do
-          local handle = io.popen("git rev-parse --short=7 HEAD")
-          if handle then
-            head_hash = handle:read("*l")
-            handle:close()
-          end
-        end
-        
         -- Check if newest commit is HEAD and all commits are reachable
-        if head_hash and selected_hashes[1] == head_hash and commits_reachable_from_head(selected_hashes) then
+        if is_head(selected_hashes[1]) and commits_reachable_from_head(selected_hashes) then
           should_show_destructive_ops = true
         end
       end
@@ -662,9 +657,9 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
           label = "Cherry-pick Range",
           fn = function(range)
             local range_str = range.from.hash .. "~1.." .. range.to.hash
-            vim.fn.system({ "git", "cherry-pick", range_str })
-            vim.notify("Cherry-picked range " .. range_str, vim.log.levels.INFO)
-            require('gitgraph').draw({}, { all = true })
+            if git_action({ "cherry-pick", range_str }, "Cherry-picked range " .. range_str) then
+              require('gitgraph').draw({}, { all = true })
+            end
           end,
         },
       }
@@ -675,9 +670,9 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
           label = "Revert Range",
           fn = function(range)
             local range_str = range.from.hash .. "~1.." .. range.to.hash
-            vim.fn.system({ "git", "revert", range_str })
-            vim.notify("Reverted range " .. range_str, vim.log.levels.INFO)
-            require('gitgraph').draw({}, { all = true })
+            if git_action({ "revert", range_str }, "Reverted range " .. range_str) then
+              require('gitgraph').draw({}, { all = true })
+            end
           end,
         })
       end
@@ -689,9 +684,7 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
           fn = function(range)
             local reset_to = range.from.hash .. "^"
             vim.ui.select({ "Yes", "No" }, { prompt = "Soft reset HEAD to " .. reset_to .. "?" }, function(choice)
-              if choice == "Yes" then
-                vim.fn.system({ "git", "reset", "--soft", reset_to })
-                vim.notify("Soft reset to " .. reset_to, vim.log.levels.INFO)
+              if choice == "Yes" and git_action({ "reset", "--soft", reset_to }, "Soft reset to " .. reset_to) then
                 require('gitgraph').draw({}, { all = true })
               end
             end)
@@ -702,9 +695,7 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
           fn = function(range)
             local reset_to = range.from.hash .. "^"
             vim.ui.select({ "Yes", "No" }, { prompt = "Hard reset HEAD to " .. reset_to .. "? This is destructive!" }, function(choice)
-              if choice == "Yes" then
-                vim.fn.system({ "git", "reset", "--hard", reset_to })
-                vim.notify("Hard reset to " .. reset_to, vim.log.levels.INFO)
+              if choice == "Yes" and git_action({ "reset", "--hard", reset_to }, "Hard reset to " .. reset_to) then
                 require('gitgraph').draw({}, { all = true })
               end
             end)
@@ -720,12 +711,12 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
               end
               local oldest = range.from.hash
               -- Move HEAD to before the oldest commit in the range
-              local reset_cmd = { "git", "reset", "--soft", oldest .. "^" }
-              local commit_cmd = { "git", "commit", "-m", msg }
-              vim.fn.system(reset_cmd)
-              vim.fn.system(commit_cmd)
-              vim.notify("Squashed range into one commit", vim.log.levels.INFO)
-              require('gitgraph').draw({}, { all = true })
+              if not git_action({ "reset", "--soft", oldest .. "^" }, "Reset to " .. oldest .. "^") then
+                return
+              end
+              if git_action({ "commit", "-m", msg }, "Squashed range into one commit") then
+                require('gitgraph').draw({}, { all = true })
+              end
             end)
           end,
         })
@@ -736,52 +727,13 @@ function M.apply_buffer_mappings(buf_id, graph, hooks)
   end, { buffer = buf_id, desc = 'select range of commit' })
 end
 
----@param cmd string
----@return boolean -- true if failure (exit code ~= 0) false otherwise (exit code == 0)
---- note that this method was sadly neede since there's some strange bug with lua's handle:close?
---- it doesn't get the exit code correctly by itself?
-function M.check_cmd(cmd)
-  local is_windows = package.config:sub(1, 1) == '\\'
-  local final_cmd = cmd
-
-  if is_windows then
-    final_cmd = final_cmd .. ' && echo 0 || echo 1'
-  else
-    final_cmd = final_cmd .. ' 2>&1; echo $?'
-  end
-
-  local res = io.popen(final_cmd)
-  if not res then
-    return true
-  end
-
-  local output, last_line = {}, '1'
-  for line in res:lines() do
-    table.insert(output, line)
-  end
-  last_line = output[#output] -- in both cases, the last line contains the exit status
-
-  res:close()
-
-  return vim.trim(last_line or '') ~= '0'
-end
-
 -- Fetch all local branches as a Lua table
 function M.get_local_branches()
-  local branches = {}
-  local handle = io.popen("git branch --list")
-  if not handle then
+  local branches = git.lines(repo_root(), { "for-each-ref", "--format=%(refname:short)", "refs/heads/" })
+  if not branches then
     vim.notify("Failed to list branches", vim.log.levels.ERROR)
-    return branches
+    return {}
   end
-  for line in handle:lines() do
-    -- Remove leading '*', whitespace, and trailing whitespace
-    local branch = line:gsub("^%*", ""):gsub("^%s+", ""):gsub("%s+$", "")
-    if branch ~= "" then
-      table.insert(branches, branch)
-    end
-  end
-  handle:close()
   if #branches == 0 then
     vim.notify("No local branches found", vim.log.levels.WARN)
   end

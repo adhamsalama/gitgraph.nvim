@@ -2,125 +2,156 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Development Commands
+## What this is
 
-Since this is a Neovim plugin written in Lua, there are no traditional build commands. Testing is done by running the plugin functions directly within Neovim.
+A Neovim plugin that started as an ASCII git graph (`:GitGraph…`, `require('gitgraph').draw()`) and is
+growing into a **lazygit-style git UI native to Neovim**: `:GitGraphWorkspace` opens a tab with status
+and branches panels and the graph (no preview pane: the user had it removed). diffview.nvim is used for full diffs, file history and
+merge conflicts (optional; features degrade without it). Requires Neovim 0.10+ (`vim.system`, `vim.fs.root`,
+`vim.iter`).
 
-### Testing
+Work happens on the `feat/workspace` branch. The user's config loads this checkout via
+`dir = "~/code/gitgraph.nvim"` in `~/.config/nvim/lua/plugins/gitgraph.lua` (keys: `<leader>gv` graph,
+`<leader>gG` workspace).
 
-- Run `lua require('gitgraph').test()` in Neovim to execute the test suite
-- Use `lua require('gitgraph').random()` to generate a random gitgraph for testing visualization
-- The test scenarios are defined in `lua/gitgraph/tests.lua` with expected visual outputs
+## Testing
 
-### Linting/Type Checking
+```bash
+tests/run.sh            # all headless integration tests (~20s)
+tests/run.sh branches   # only tests whose name contains "branches"
+GG_KEEP=1 tests/run.sh  # keep the temp dir (fixture repos, nvim.log, results.txt) for debugging
+```
 
-This project uses Lua annotations for type checking but doesn't appear to have automated linting setup. When making changes, ensure:
+- Each `tests/test_*.lua` runs in a fresh `nvim --headless --clean` against fixture repos that
+  `tests/fixtures.sh` builds in a temp dir (including a bare `origin` plus a second clone that moves it,
+  for push/pull/rejection scenarios). Git runs with an isolated config (`GIT_CONFIG_GLOBAL`), so the user's
+  signing/hooks/defaults can't interfere.
+- `tests/helpers.lua` provides `H.check(name, ok, extra)`, `H.wait(ms, cond)`, `H.git(repo, ...)`,
+  `H.p(...)` (print is lost headless) and `H.run(fn)`. Tests stub `vim.ui.select`/`vim.ui.input`/`vim.notify`
+  when they need answers or want to inspect messages.
+- Most behaviour is async (git runs via `vim.system`, debounced refreshes), so always
+  `H.wait(ms, cond)` on an observable result instead of asserting right after an action.
+- The original rendering suite (`require('gitgraph').test()`, `lua/gitgraph/tests.lua`) **already fails on
+  upstream `main`** (scenario "foo"); it isn't part of `tests/run.sh`.
 
-- Lua type annotations (`---@type`, `---@class`, `---@param`) are maintained
-- Code follows the existing style patterns
+Format new/changed code with `stylua` (`.stylua.toml`: 2 spaces, single quotes). Older files
+(`core.lua`, `utils.lua`, `gitgraph.lua`) were never stylua-formatted; don't reformat them wholesale,
+it buries real changes in the diff.
 
-## Architecture Overview
+## Architecture
 
-### Core Structure
+### Graph (original plugin, refactored)
 
-This is a Neovim plugin that generates ASCII-based git commit graphs with temporal topological ordering. The codebase is organized into several key modules:
+| Module | Role |
+|---|---|
+| `lua/gitgraph.lua` | Entry: `setup`, `draw(options, args)`, `refresh()`, search panel, user commands. Holds state: `repo`, `buf`, `graph`, `last_args`, `last_branch_args`. |
+| `lua/gitgraph/git.lua` | **All git calls go through here**: `run` (sync), `run_async`, `lines`, `find_repo`, `log_args`, `parse_log`, `git_log_pretty`. Argument lists only, never shell strings. Adds `--no-pager -c color.ui=false`. |
+| `lua/gitgraph/draw.lua` | `draw` = `show_buffer` (window/tab management, sync) + `render` (async fetch → `core.gitgraph` → buffer). A generation counter drops stale results. Fires `User GitGraphRendered` after each render. |
+| `lua/gitgraph/core.lua` | Layout algorithm: raw commits → rows/lines/highlights. `core.gitgraph(config, options, data)` takes already-fetched commits. Two buffer lines per commit (commit row + message row); `utils.get_commit_from_row` maps a line to its commit. |
+| `lua/gitgraph/refs.lua` | `%D` parsing (`git log --decorate=full`) into typed `I.Ref`s, ref badges (`badges`: `HEAD → main`, `main ⇄ origin` when the remote branch is on the same commit, `origin/HEAD` hidden) and lane colours (`assign_lanes`: first-parent walks from tips, trunk branches first; `color_index` = djb2 of the branch name). |
+| `lua/gitgraph/utils.lua` | Buffer keymaps for the graph (`<CR>` commit actions, visual `<CR>` range actions, `<leader>gV*`), safety checks for destructive actions, `git_action` helper, `name_tab`. |
+| `lua/gitgraph/focus.lua` | Branch focus (`<leader>gVf` toggle): dims commits not reachable from the focused commit, from in-memory parents. Follows the commit's ref across redraws; dims nothing (but stays on) while its commit isn't in the graph or the repo differs. |
+| `lua/gitgraph/rewrite.lua` | `<CR>` menu entries fixup/reword/drop/move up/move down. `plan` builds a `git rebase -i` todo (only for commits reachable from HEAD on a branch, with no merges in the rebase range); `run` copies it in via `GIT_SEQUENCE_EDITOR=cp <file>` (reword: `GIT_EDITOR=cp <msgfile>`, message from the commit editor float's `submit` hook) through `jobs.run`. Drop and rewriting commits already on `@{upstream}` confirm first; a conflict leaves the rebase stopped with a continue/abort hint. |
+| `lua/gitgraph/guard.lua` | Protects the plugin's windows: `own(buf)` marks plugin buffers, `protect(win)` makes a window hand any other buffer back out (diffview's `gf` `:edit`s in the previous tab, i.e. ours). The file moves to the tab the plugin was opened from (`guard.tabnew` records it), else another non-plugin, non-diffview tab, else a new tab, keeping the cursor. |
+| `lua/gitgraph/github.lua` | GitHub CLI: `list_async` (`gh pr list --json`, parsed to `I.PullRequest`), `run_async` (no prompts). `M.cmd` is the executable (tests use a fake script). |
+| `lua/gitgraph/hosting.lua` | Remote URL parsing and pull/merge request URLs (GitHub `compare/base...head?expand=1`, GitLab `-/merge_requests/new?...`). Unknown domains need config `git_hosts = { [domain] = 'github'|'gitlab' }`. Used by `O` in the Branches panel (lazygit's "create pull request": pick the target branch, remote's default first, then `vim.ui.open`). |
+| `lua/gitgraph/worktrees.lua` | `git worktree list --porcelain` parsing (a bare repo's own entry is dropped), `base_dir`/`default_path` (bare: inside the bare repo's folder, `proj/` for the `proj/.bare` + `.git` file layout; otherwise `../<repo>-<branch>` next to the main worktree), `display` (short paths), `real` (realpath: macOS `/var` vs `/private/var`; compare worktree paths through it). |
+| `lua/gitgraph/watch.lua` | fs-event watcher on git_dir, `logs/` and `refs/` (recursive; Linux only sees top-level). `subscribe(name, fn, {index})`/`unsubscribe`; debounced per subscriber. Graph subscribes as `graph` (ignores index changes), workspace as `workspace` (includes index). |
 
-**Main Entry Point (`lua/gitgraph.lua`)**
+Key behaviours:
+- **Repo resolution** (`gitgraph._resolve_repo`): the graph's own repo when called from the graph/search
+  buffer, else the current file's repo, else cwd. `draw` accepts `options.repo` to skip resolution.
+  Every git command (including destructive actions) runs in `repo.root`. A bare repo (no worktree) resolves
+  to `repo.bare = true` with `root = git_dir = common_dir`; the graph works, working-tree actions fail with
+  git's error.
+- **Cursor after a draw**: a chosen branch/range (`args.revision_range`) opens at row 1 (its newest commit);
+  the default views open on HEAD. Refreshes keep each window on the same commit.
+- **Auto-refresh**: watcher → `gitgraph.refresh()` re-runs `last_args` with `preserve_cursor` (cursor stays on
+  the same commit). Deferred via `_dirty` while the graph is hidden or the user is in visual mode.
+  If a shown ref disappeared, refresh falls back to local branches with one warning.
+- Ref badges are real buffer text (so `/` search works) with `GitGraphRef{Head,Local,Remote,Tag,Other}` extmarks.
+  `commit.branch_names`/`tags` keep the old short strings (`HEAD -> main`, `tag: v1`).
+- Lane colours come from the commit's branch, not its column. A line cell's `commit` is the commit it leads
+  *to*, so `core` tracks the last commit drawn per column: a first-parent edge takes the child's colour.
+- `draw.highlights` keeps the last render's highlights; `draw.apply_highlights()` re-applies them with focus
+  dimming (dimmed rows get only `GitGraphDimmed`), so toggling focus doesn't re-run git.
+- Highlights are extmarks in `draw.ns`. Commit hashes in the graph are abbreviated (`%h`, may be >7
+  chars); compare with full hashes via `vim.startswith(full, short)`.
 
-- Plugin setup and configuration management
-- User commands and interactive functions (branch selection, author search, commit search)
-- Buffer management and search functionality
+### Workspace (`lua/gitgraph/workspace/`)
 
-**Core Engine (`lua/gitgraph/core.lua`)**
+| Module | Role |
+|---|---|
+| `init.lua` | Opens/closes the tab (named via `vim.t.name`, config `tab_name`), layout (Status and Branches on the left, graph on the right), workspace-wide keys, autocmds, `show_in_graph(args)`, graph winbar, `follow_branch`. |
+| `panel.lua` | Base `Panel`: read-only buffer of `I.PanelLine`s (text, highlight marks, item per line), keymaps from `{lhs, fn(panel), desc, mode?}`, `item()`, `selected_items()`, `?` help float (`panel.help`). |
+| `status.lua` | `git status --porcelain=v1 -z --branch` parsing and rendering (Conflicts/Changes/Untracked/Staged), stage/unstage/discard. Uses `--no-optional-locks` so its own refreshes don't rewrite the index (which would retrigger the watcher). |
+| `branches.lua` | `for-each-ref` parsing, Local/Remotes/Tags/Worktrees tabs, filter, checkout/create/delete/rename/upstream/rebase/merge. `select_next` keeps the cursor on a renamed or new branch. Worktrees: `<Space>` switches, `n` (Worktrees tab: a free branch, or `+ New branch` asking the base branch, current first; created `--no-track`) / `w` (on a branch) create one and switch to it, `d` removes (confirms again when dirty; never deletes the branch). A branch checked out in another worktree shows `⊕ <path>` (`%(worktreepath)`); `<Space>` on it offers that worktree, `d` refuses. PRs tab: open PRs from `gh pr list` (`github.lua`; fetched on entering the tab, cached `PR_MAX_AGE` = 60s, `R` reloads), the current branch's first; the graph follows the PR's remote branch; `<Space>` runs `gh pr checkout` (a job), `O` opens it in the browser. |
+| `commit.lua` | Floating `gitcommit` buffer (`acwrite`); `:w` runs `git commit --cleanup=strip -F -` with the message on stdin (and `-c core.commentChar=#`). Reopens with the message if the commit fails after `:wq`. |
+| `jobs.lua` | Long-running commands (fetch/pull/push/rebase/merge/remote delete): background, `detach = true` and `GIT_TERMINAL_PROMPT=0` so credential prompts fail instead of hanging on Neovim's tty, `GIT_EDITOR=true`. Push offers set-upstream and force-with-lease after a rejection. Jobs given `branch` (pull/push/merge/rebase) are listed in `jobs.active` and fire `User GitGraphJobs`; the Branches panel shows an animated `⠋ Pushing` inline after that local branch. |
 
-- The heart of the graph generation algorithm
-- Implements temporal topological ordering
-- Handles complex branching scenarios and merge commit visualization
-- Contains the main `_gitgraph()` function that processes raw commits into visual graph
+Design decisions worth keeping:
+- **The graph buffer is shared** between the standalone graph and the workspace. Workspace keys are mapped
+  on it only while it's shown in the workspace tab (mapped on BufEnter/TabEnter, removed on TabLeave);
+  don't add workspace keys to `utils.apply_buffer_mappings`.
+- **Panel keys take precedence over workspace keys** with the same lhs (e.g. `R` renames in Branches but
+  refreshes elsewhere). Number keys aren't used for panel switching because they're counts in Vim;
+  `<Tab>`/`<S-Tab>` cycle Status → Branches → Graph.
+- **The graph follows the branch under the cursor** in the Branches panel (150ms debounce). `show_in_graph`
+  draws through `nvim_win_call` so BufEnter doesn't fire and focus stays in the panel.
+- Status refreshes on watcher events, BufWritePost of files in the repo, FocusGained, BufEnter and TabEnter.
+- Workspace windows and the graph's own tab are `guard.protect`ed; a graph drawn with `force_current_window`
+  is not. Panel buffers are `bufhidden=hide` (so the guard can restore them) and are deleted in
+  `teardown`.
+- Prompts use `vim.ui.select({ 'Yes', 'No' })` / `vim.ui.input`; destructive actions always confirm.
+- **Worktrees** (the user works with bare clones in the `proj/.bare` + `.git` file layout): the workspace
+  switches worktree in place (`M.switch_worktree(path?)` repoints `ws.repo` and both panels, restarts the
+  watcher, which is keyed on `git_dir`) and `:cd`s Neovim into it (global, not `:tcd`: the user wants to work
+  as if there were no worktrees; with no worktree: the bare repo's folder). Switching first closes every other
+  tab and every file buffer (`close_everything`; unsaved buffers: save and switch, or cancel). Opening from a file doesn't cd;
+  picking a worktree when opening from a bare folder does. Opened from a bare repo's folder it asks which worktree
+  (default branch first); with none it opens in no-worktree mode (Status says so, Branches starts on
+  Worktrees, `<Space>` on a branch creates a worktree). Removing the current worktree switches away first.
+  `offer_remote_branches`: a bare clone has no `remote.<r>.fetch`; offered once (a No is stored as
+  `gitgraph.skipRemoteBranches` in the repo config), Yes sets it, fetches and sets upstreams.
 
-**Git Integration (`lua/gitgraph/git.lua`)**
+## Roadmap
 
-- Interfaces with git commands to fetch commit data
-- Handles various git log arguments and filters
+Done: (1) async plumbing and auto-refresh, (2) workspace, status panel and commit editor, (3) branches
+panel and fetch/pull/push, (4) graph upgrades (below).
 
-**Drawing System (`lua/gitgraph/draw.lua`)**
+**Step 4: graph upgrades** (done). Decisions from the user: keep the two-lines-per-commit layout; badges
+are coloured pills; branch focus is a toggle (`<leader>gVf`), not automatic; commit actions live only in the
+`<CR>` menu (no direct keys).
 
-- Manages buffer creation and rendering
-- Handles user interactions and keymaps
-- Integrates with highlighting system
+Open items from the user (undecided):
+- Branch focus confused the user and only helps when the graph shows several branches (the workspace graph
+  follows one branch). Offered: a "Which branches contain this commit?" `<CR>` menu entry, and keeping,
+  changing or removing focus.
+- `<Space>` checks out in the Branches panel but is the user's leader key; offered to move checkout (e.g. `c`).
+- Ahead/behind counts on a local badge (`main ↑2 ↓1`).
 
-**Configuration (`lua/gitgraph/config.lua`)**
+**Step 5** (the user tried a stash panel and had it removed: they don't need stash support)
+- Rebase/merge-in-progress banner with continue/abort/skip.
+- Undo through the reflog (commits/resets only; never discarded working-tree changes).
+- Polish: graph `K` hover with full message and `--stat`, `]r`/`[r` to jump between refs, infinite scroll via
+  `args.skip`.
 
-- Default symbols and formatting options
-- Extensible configuration system for customization
+Known limitations: network operations can't prompt for credentials (needs ssh-agent or a credential helper);
+commit hooks and GPG signing that need a tty fail with their error shown; recursive ref watching doesn't
+work on Linux.
 
-**Supporting Modules**
+## User commands
 
-- `highlights.lua` - Color scheme and syntax highlighting
-- `utils.lua` - Utility functions for branch operations and UI
-- `log.lua` - Logging system
-- `tests.lua` - Test scenarios and validation
+- `:GitGraphWorkspace`: open (or switch to) the workspace
+- `:GitGraphMerges [all|only|hide]` (graph key `<leader>gVm`): sticky merge-commit filter
+  (`gitgraph.merge_filter`; no argument or `<leader>gVm`: a selector marking the current mode), applied to every draw that doesn't set `merges`/`no_merges` itself
+  (search panel flags win); shown in the graph winbar (standalone: only when not "all")
+- `:GitGraphSelectBranch`, `:GitGraphAuthor`, `:GitGraphMessage`, `:GitGraphSearch` (search panel),
+  `:GitGraphMaxCount`
 
-### Key Design Patterns
+## Safety features (graph actions)
 
-**Symbol-Based Rendering**: Uses configurable Unicode/ASCII symbols for different git graph elements (commits, merges, branches, connectors)
-
-**Two-Phase Graph Generation**:
-
-1. Layout phase: Determines commit positions and branch lanes
-2. Connector phase: Adds visual connectors between commits
-
-**Interactive Search**: Advanced search functionality with persistent filters for author, message, branch selection, and various git log options
-
-**Hook System**: Extensible callback system for integration with other plugins (like diffview.nvim)
-
-### Important Implementation Details
-
-**Branch Lane Management**: The algorithm ensures branches stick to consistent lanes for visual clarity, handling complex scenarios like bi-crossings and merge commits.
-
-**Performance Considerations**: Designed for large repositories with configurable `max_count` limits and efficient scrolling.
-
-**State Management**: Maintains search history and branch selection state across plugin invocations.
-
-## User Commands Available
-
-- `:GitGraphSelectBranch` - Interactive branch selection
-- `:GitGraphAuthor` - Filter by author
-- `:GitGraphMessage` - Search commit messages
-- `:GitGraphSearch` - Advanced search with multiple filters
-- `:GitGraphMaxCount` - Set commit count limit
-
-## Integration Notes
-
-When extending this plugin, note that it's designed to integrate with diffview.nvim for commit viewing, and the hook system allows for easy extension with other git-related plugins.
-
-The plugin uses buffer-local keymaps and maintains its own buffer state separate from regular git repositories.
-
-## Safety Features
-
-The plugin includes several safety mechanisms for destructive operations:
-
-**Branch Context Validation**: Reset and squash operations are only available when viewing the current branch (not when viewing "All branches" or other branches).
-
-**Commit Reachability Checks**: All selected commits must be reachable from HEAD to prevent operations on commits from other branches.
-
-**HEAD Position Validation**: For multi-commit selections, destructive operations only appear when HEAD is the newest commit in the selection, preventing unsafe operations on historical ranges.
-
-These safety checks are implemented in `utils.lua:is_viewing_current_branch()` and `utils.lua:commits_reachable_from_head()`.
-
-## Buffer Management
-
-The plugin intelligently manages GitGraph buffers across tabs:
-
-**Smart Tab Switching**: When opening GitGraph, the plugin first checks if a GitGraph buffer already exists in another tab and switches to it, rather than opening in the current window.
-
-**New Tab Creation**: Creates a new tab when:
-- No GitGraph buffer exists yet
-- The `open_in_new_tab` option is explicitly set  
-- The buffer exists but isn't displayed in any tab (e.g., after closing the GitGraph tab)
-
-**Tab Close Handling**: When you close a GitGraph tab, the buffer remains in memory. Next time you open GitGraph, it will create a new tab instead of overlaying the current buffer.
-
-**Force Current Window**: Use `{ force_current_window = true }` in draw options to override tab switching and force GitGraph to open in the current window.
-
-Buffer management logic is implemented in `draw.lua:find_and_switch_to_gitgraph_tab()`.
+Reset/squash only appear when viewing the current branch, all selected commits are reachable from HEAD,
+and (for ranges) HEAD is the newest selected commit. See `is_viewing_current_branch()` and
+`commits_reachable_from_head()` in `utils.lua`. Failed git actions report git's error instead of a
+success message.

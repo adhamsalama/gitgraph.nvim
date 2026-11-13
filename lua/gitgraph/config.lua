@@ -42,12 +42,18 @@ local log = require('gitgraph.log')
 ---@field hooks I.Hooks
 ---@field log_level integer
 ---@field max_count integer
+---@field watch boolean -- redraw when HEAD or refs change (checkout, commit, fetch, ...)
+---@field tab_name string? -- name for tabs the plugin opens, stored in `vim.t.name` for tablines that show it
+---@field git_hosts table<string, 'github'|'gitlab'> -- self-hosted domains for opening pull requests (github/gitlab domains are detected)
 
 local M = {}
 
 ---@type I.GGConfig
 M.defaults = {
   max_count = 256,
+  watch = true,
+  tab_name = 'GitGraph',
+  git_hosts = {},
   symbols = {
     merge_commit = 'M',
     commit = '*',
